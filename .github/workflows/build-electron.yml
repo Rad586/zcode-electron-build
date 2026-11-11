@@ -1,4 +1,4 @@
-name: Build Electron frame cap
+name: Build Electron kernel
 
 on:
   workflow_dispatch:
@@ -42,12 +42,14 @@ jobs:
           if errorlevel 1 exit /b 1
           call gclient sync --no-history --shallow --jobs 2 --revision src/electron@v44.10.2
           if errorlevel 1 exit /b 1
-      - name: Patch native frame cap and configure
+      - name: Patch kernel and configure
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           python "$env:GITHUB_WORKSPACE\apply-frame-cap.py" D:\ec\src\electron
-          if ($LASTEXITCODE) { throw 'Native patch failed' }
+          if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
+          python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
+          if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
           if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation; stopping before disk exhaustion' }
           New-Item -ItemType Directory -Force D:\ec\src\out\Release | Out-Null
           @'
@@ -68,10 +70,29 @@ jobs:
         run: |
           call autoninja -C out/Release electron:electron_dist_zip -j 2
           if errorlevel 1 exit /b 1
+      - name: Validate native kernel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:ZCODE_KERNEL_PROFILE = 'D:\ec\test-profile'
+          $env:ZCODE_KERNEL_OUTPUT = 'D:\ec\native-kernel.json'
+          & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\native-kernel.cjs"
+          if ($LASTEXITCODE) { throw 'Native kernel checks failed' }
+          Copy-Item D:\ec\src\electron\lib\node\asar-fs-wrapper.ts D:\ec\asar-fs-wrapper.ts
+          Copy-Item D:\ec\src\electron\spec\fixtures\test.asar\a.asar D:\ec\fixture.asar
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & D:\ec\src\out\Release\electron.exe --expose-internals "$env:GITHUB_WORKSPACE\test-asar-stat.cjs" D:\ec\asar-fs-wrapper.ts D:\ec\fixture.asar D:\ec\asar-stat.json
+          if ($LASTEXITCODE) { throw 'ASAR stat checks failed' }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat')} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
         with:
           name: electron-44.10.2-frame-cap-win32-x64
-          path: D:\ec\src\out\Release\dist.zip
+          path: |
+            D:\ec\src\out\Release\dist.zip
+            D:\ec\build-inputs.json
+            D:\ec\native-kernel.json
+            D:\ec\asar-stat.json
           if-no-files-found: error
           retention-days: 7
       - name: Report remaining disk
