@@ -52,6 +52,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          git -C D:\ec\src\electron pack-refs --all
+          if ($LASTEXITCODE) { throw 'Electron Git reference preparation failed' }
           python "$env:GITHUB_WORKSPACE\apply-frame-cap.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
