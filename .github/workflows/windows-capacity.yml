@@ -1,0 +1,55 @@
+name: Electron Windows build capacity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capacity:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check native build prerequisites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cpu = Get-CimInstance Win32_Processor
+          $memory = Get-CimInstance Win32_ComputerSystem
+          $disks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3')
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $compiler = if (Test-Path $vswhere) {
+            & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          }
+          $atl = if (Test-Path $vswhere) {
+            & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.ATL -property installationPath
+          }
+          $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
+          $sdks = if (Test-Path $sdkRoot) { @(Get-ChildItem $sdkRoot -Directory | ForEach-Object Name) } else { @() }
+          $best = $disks | Sort-Object FreeSpace -Descending | Select-Object -First 1
+          $report = [ordered]@{
+            electron = '44.10.2'
+            chromium = '152.0.7977.169'
+            runnerImage = $env:ImageOS
+            logicalProcessors = ($cpu | Measure-Object NumberOfLogicalProcessors -Sum).Sum
+            memoryGiB = [math]::Round($memory.TotalPhysicalMemory / 1GB, 1)
+            disks = @($disks | ForEach-Object { @{ drive = $_.DeviceID; freeGiB = [math]::Round($_.FreeSpace / 1GB, 1) } })
+            visualStudioCpp = $compiler
+            visualStudioAtl = $atl
+            windowsSdk = $sdks
+            requiredFreeGiB = 250
+          }
+          $json = $report | ConvertTo-Json -Depth 5
+          Write-Output $json
+          @('```json', $json, '```') | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (-not $best -or $best.FreeSpace -lt 250GB) {
+            throw 'No drive has 250 GiB free for Chromium checkout, dependencies, and native build output. Source sync was not started.'
+          }
+          if (-not $compiler -or -not $atl) {
+            throw 'Visual Studio C++ tools and ATL are required.'
+          }
+          if ($sdks -notcontains '10.0.26100.0') {
+            throw 'Windows SDK 10.0.26100.0 is required.'
+          }
+          Write-Output 'Native build prerequisites passed.'
