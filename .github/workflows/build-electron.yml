@@ -1,0 +1,78 @@
+name: Build Electron frame cap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 350
+    env:
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+      DEPOT_TOOLS_UPDATE: '0'
+      GIT_TERMINAL_PROMPT: '0'
+      GCM_INTERACTIVE: never
+      GCM_GUI_PROMPT: 'false'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare remote workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config --global core.longpaths true
+          git config --global credential.interactive false
+          New-Item -ItemType Directory -Force D:\ec | Out-Null
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git D:\depot_tools
+          if ($LASTEXITCODE) { throw 'depot_tools checkout failed' }
+          'D:\depot_tools' | Add-Content $env:GITHUB_PATH
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          "vs2022_install=$vs" | Add-Content $env:GITHUB_ENV
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free
+      - name: Sync Electron and Chromium remotely
+        shell: cmd
+        working-directory: D:\ec
+        run: |
+          call gclient config --name src/electron --unmanaged https://github.com/electron/electron
+          if errorlevel 1 exit /b 1
+          call gclient sync --no-history --shallow --jobs 2 --revision src/electron@v44.10.2
+          if errorlevel 1 exit /b 1
+      - name: Patch native frame cap and configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python "$env:GITHUB_WORKSPACE\apply-frame-cap.py" D:\ec\src\electron
+          if ($LASTEXITCODE) { throw 'Native patch failed' }
+          if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation; stopping before disk exhaustion' }
+          New-Item -ItemType Directory -Force D:\ec\src\out\Release | Out-Null
+          @'
+          import("//electron/build/args/release.gn")
+          target_cpu = "x64"
+          symbol_level = 0
+          blink_symbol_level = 0
+          v8_symbol_level = 0
+          use_remoteexec = false
+          use_reclient = false
+          '@ | Set-Content -Encoding utf8NoBOM D:\ec\src\out\Release\args.gn
+          Set-Location D:\ec\src
+          & D:\depot_tools\gn.bat gen out/Release
+          if ($LASTEXITCODE) { throw 'GN generation failed' }
+      - name: Compile Windows x64 runtime
+        shell: cmd
+        working-directory: D:\ec\src
+        run: |
+          call autoninja -C out/Release electron:electron_dist_zip -j 2
+          if errorlevel 1 exit /b 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electron-44.10.2-frame-cap-win32-x64
+          path: D:\ec\src\out\Release\dist.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Report remaining disk
+        if: always()
+        shell: pwsh
+        run: Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free
