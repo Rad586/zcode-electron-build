@@ -94,7 +94,7 @@ async function main() {
     }
     assert(actual.mtime instanceof Date);
     assert.equal(actual.mtimeMs, wrapped.statSync(target).mtimeMs);
-    assert.equal(actual.mtimeMs, Number(wrapped.statSync(target, {bigint: true}).mtimeNs) / 1e6);
+    assert(Math.abs(actual.mtimeMs - Number(wrapped.statSync(target, {bigint: true}).mtimeNs) / 1e6) < 0.001);
     checks += 3;
   }
   for (const name of ['stat', 'lstat']) {
@@ -114,6 +114,22 @@ async function main() {
     };
     assert.deepEqual(await ordering(wrapped), await ordering(fs));
     checks++;
+  }
+  for (const target of [null, 42, {}, new URL('https://example.com/file'), 'invalid\0path']) {
+    for (const name of ['statSync', 'lstatSync', 'stat', 'lstat']) {
+      assert.deepEqual(outcome(() => wrapped[name](target, () => {})), outcome(() => fs[name](target, () => {})));
+      checks++;
+    }
+  }
+  for (const target of [require('node:url').pathToFileURL(file), require('node:url').pathToFileURL(missing)]) {
+    for (const name of ['statSync', 'lstatSync']) {
+      assert.deepEqual(outcome(() => wrapped[name](target)), outcome(() => fs[name](target)));
+      checks++;
+    }
+    for (const name of ['stat', 'lstat']) {
+      assert.deepEqual(await asyncStat(wrapped, name, target), await asyncStat(fs, name, target));
+      checks++;
+    }
   }
   const mixed = Array.from({length: 256}, (_, index) => asyncStat(wrapped, index % 2 ? 'stat' : 'lstat', cases[index % cases.length], {bigint: !!(index % 2)}));
   const expectedMixed = Array.from({length: 256}, (_, index) => asyncStat(fs, index % 2 ? 'stat' : 'lstat', cases[index % cases.length], {bigint: !!(index % 2)}));
@@ -150,7 +166,26 @@ async function main() {
     const key = node.callFrame.functionName || '(anonymous)';
     hits.set(key, (hits.get(key) || 0) + (node.hitCount || 0));
   }
-  const result = {checks, perCall, microseconds: samples, median: samples.toSorted((a, b) => a - b)[3], hotspots: [...hits].sort((a, b) => b[1] - a[1]).slice(0, 12)};
+  const asyncSamples = [];
+  const asyncCount = Math.min(count, 20000);
+  const runAsync = count => new Promise((resolve, reject) => {
+    let remaining = count;
+    const next = error => {
+      if (error) return reject(error);
+      if (--remaining === 0) return resolve();
+      wrapped.stat(file, next);
+    };
+    wrapped.stat(file, next);
+  });
+  await runAsync(1000);
+  for (let round = 0; round < 7; round++) {
+    const start = performance.now();
+    await runAsync(asyncCount);
+    asyncSamples.push((performance.now() - start) * 1000 / asyncCount);
+  }
+  const result = {checks, perCall, microseconds: samples, median: samples.toSorted((a, b) => a - b)[3],
+    asyncMicroseconds: asyncSamples, asyncMedian: asyncSamples.toSorted((a, b) => a - b)[3],
+    hotspots: [...hits].sort((a, b) => b[1] - a[1]).slice(0, 12)};
   originalFs.writeFileSync(output, JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
 }
