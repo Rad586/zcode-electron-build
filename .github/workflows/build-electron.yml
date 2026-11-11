@@ -34,13 +34,19 @@ jobs:
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           "vs2022_install=$vs" | Add-Content $env:GITHUB_ENV
           Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free
+      - name: Initialize depot_tools
+        shell: cmd
+        run: |
+          call D:\depot_tools\bootstrap\win_tools.bat
+          if errorlevel 1 exit /b 1
+          if not exist D:\depot_tools\python3_bin_reldir.txt exit /b 1
       - name: Sync Electron and Chromium remotely
         shell: cmd
         working-directory: D:\ec
         run: |
-          call gclient config --name src/electron --unmanaged https://github.com/electron/electron
+          call D:\depot_tools\gclient.bat config --name src/electron --unmanaged https://github.com/electron/electron
           if errorlevel 1 exit /b 1
-          call gclient sync --no-history --shallow --jobs 2 --revision src/electron@v44.10.2
+          call D:\depot_tools\gclient.bat sync --no-history --shallow --jobs 2 --revision src/electron@v44.10.2
           if errorlevel 1 exit /b 1
       - name: Patch kernel and configure
         shell: pwsh
@@ -68,7 +74,7 @@ jobs:
         shell: cmd
         working-directory: D:\ec\src
         run: |
-          call autoninja -C out/Release electron:electron_dist_zip -j 2
+          call D:\depot_tools\autoninja.bat -C out/Release electron:electron_dist_zip -j 2
           if errorlevel 1 exit /b 1
       - name: Validate native kernel
         shell: pwsh
