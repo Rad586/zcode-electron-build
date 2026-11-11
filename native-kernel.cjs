@@ -64,6 +64,21 @@ async function main() {
   assert.deepEqual(await nextPortResult, {ok: true});
   nextChannel.port1.close();
   check();
+  const channels = Array.from({length: 64}, () => new MessageChannelMain());
+  try {
+    const received = channels.map(({port1, port2}) => {
+      port1.start();
+      const reply = new Promise(resolve => port1.once('message', ({data}) => resolve(data)));
+      window.webContents.postMessage('kernel:port-next', null, [port2]);
+      return reply;
+    });
+    for (const reply of await Promise.all(received)) {
+      assert.deepEqual(reply, {ok: true});
+      check();
+    }
+  } finally {
+    for (const {port1} of channels) port1.close();
+  }
   const immediateStart = performance.now();
   await new Promise(resolve => {
     let count = 0;
@@ -96,7 +111,7 @@ async function main() {
     await worker.terminate();
     check();
   }
-  for (let round = 0; round < 6; round++) {
+  for (let round = 0; round < 20; round++) {
     await window.loadURL('data:text/html,<title>navigation ' + round + '</title>');
     assert.equal(await window.webContents.executeJavaScript(`new Promise(resolve => setTimeout(() => resolve(42), 2))`), 42);
     const child = await createWindow();
@@ -104,6 +119,9 @@ async function main() {
     child.destroy();
     check();
   }
+  assert.equal(windows.size, 1);
+  assert.equal(BrowserWindow.getAllWindows().length, 1);
+  check();
   const idleStart = process.cpuUsage();
   const idleWall = performance.now();
   await new Promise(resolve => setTimeout(resolve, 1000));
