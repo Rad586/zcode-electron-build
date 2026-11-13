@@ -1,7 +1,14 @@
 name: Build Electron kernel with checkpoints
 
+run-name: Resume Electron ${{ inputs.predecessor || github.run_id }}
+
 on:
   workflow_dispatch:
+    inputs:
+      predecessor:
+        description: Previous run to continue after a workflow update
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -21,6 +28,7 @@ jobs:
       PYTHONIOENCODING: utf-8
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_IDLE_TIMEOUT: '0'
+      ZCODE_COMPILE_MINUTES: '240'
     steps:
       - uses: actions/checkout@v4
       - uses: mozilla-actions/sccache-action@v0.0.11
@@ -31,13 +39,18 @@ jobs:
           git config --global core.longpaths true
           git config --global credential.interactive false
           New-Item -ItemType Directory -Force D:\ec | Out-Null
-          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git D:\depot_tools
+          git init D:\depot_tools
+          if ($LASTEXITCODE) { throw 'depot_tools initialization failed' }
+          git -C D:\depot_tools fetch --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git 97da8489e4b7e9dc78fa2efb846871a7b423d933
+          if ($LASTEXITCODE) { throw 'depot_tools fetch failed' }
+          git -C D:\depot_tools checkout --detach FETCH_HEAD
           if ($LASTEXITCODE) { throw 'depot_tools checkout failed' }
           'D:\depot_tools' | Add-Content $env:GITHUB_PATH
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           "vs2022_install=$vs" | Add-Content $env:GITHUB_ENV
           $memory = [math]::Ceiling((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
           "ZCODE_BUILD_MEMORY_GB=$memory" | Add-Content $env:GITHUB_ENV
+          "CHECKPOINT_IMAGE=$env:ImageVersion" | Add-Content $env:GITHUB_ENV
           Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors,TotalPhysicalMemory
           Get-PSDrive -PSProvider FileSystem | Select-Object Name,Used,Free
       - name: Initialize depot_tools
@@ -54,6 +67,14 @@ jobs:
           if errorlevel 1 exit /b 1
           call D:\depot_tools\gclient.bat sync --no-history --shallow --jobs 2 --revision src/electron@v44.10.2
           if errorlevel 1 exit /b 1
+      - name: Restore build checkpoint cache
+        id: checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: D:\ec\checkpoint
+          key: ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-${{ github.sha }}-
       - name: Patch kernel and configure
         shell: pwsh
         run: |
@@ -78,14 +99,38 @@ jobs:
           use_reclient = false
           cc_wrapper = "$wrapper"
           "@ | Set-Content -Encoding utf8NoBOM D:\ec\src\out\Release\args.gn
-          Set-Location D:\ec\src
-          & D:\depot_tools\gn.bat gen out/Release
-          if ($LASTEXITCODE) { throw 'GN generation failed' }
+          python "$env:GITHUB_WORKSPACE\checkpoint.py" restore
+          if ($LASTEXITCODE) { throw 'Build checkpoint restore failed' }
+          if (-not (Test-Path D:\ec\src\out\Release\.ninja_log)) {
+            Set-Location D:\ec\src
+            & D:\depot_tools\gn.bat gen out/Release
+            if ($LASTEXITCODE) { throw 'GN generation failed' }
+          }
       - name: Compile Windows x64 runtime
+        id: compile
         shell: pwsh
         run: |
           python "$env:GITHUB_WORKSPACE\compile-runtime.py"
           if ($LASTEXITCODE) { throw 'Compilation incomplete; compiler cache retained for the next run' }
+      - name: Prepare build checkpoint
+        id: prepare_checkpoint
+        if: ${{ !cancelled() && steps.compile.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item D:\ec\checkpoint -Recurse -Force -ErrorAction SilentlyContinue
+          python "$env:GITHUB_WORKSPACE\checkpoint.py" save
+          if ($LASTEXITCODE) { throw 'Build checkpoint preparation failed' }
+      - name: Save build checkpoint cache
+        if: ${{ !cancelled() && steps.prepare_checkpoint.outputs.ready == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: D:\ec\checkpoint
+          key: ${{ steps.checkpoint.outputs.cache-primary-key }}
+      - name: Require completed compilation
+        if: ${{ !cancelled() && steps.compile.outcome != 'success' }}
+        shell: pwsh
+        run: throw 'Compilation incomplete; build checkpoint and compiler cache retained for continuation'
       - name: Report compiler cache
         if: always()
         shell: pwsh

@@ -39,7 +39,7 @@ def compile_runtime():
         except subprocess.TimeoutExpired:
             elapsed = (time.monotonic() - started) / 60
             print(f'{datetime.datetime.now().isoformat()} elapsed={elapsed:.1f}m latest={latest[0]}', flush=True)
-            if elapsed >= 280:
+            if elapsed >= int(os.environ.get('ZCODE_COMPILE_MINUTES', '280')):
                 print('Compile time budget exhausted; preserving uploaded compiler cache.', flush=True)
                 subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=True)
                 process.wait(timeout=30)
