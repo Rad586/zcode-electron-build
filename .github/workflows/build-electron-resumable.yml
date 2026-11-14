@@ -72,9 +72,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: D:\ec\checkpoint
-          key: ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ninja-v2-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-${{ github.sha }}-
+            ninja-v2-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-
+            ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-4dbfd300a0041b5eef4faf03c6674f0192e1ba89-
       - name: Patch kernel and configure
         shell: pwsh
         run: |

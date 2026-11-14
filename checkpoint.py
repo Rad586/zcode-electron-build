@@ -6,7 +6,12 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
+
+HERE = Path(__file__).resolve().parent
+LEGACY_SOURCE = '4dbfd300a0041b5eef4faf03c6674f0192e1ba89'
+PATCH_SCRIPTS = ('apply-frame-cap.py', 'apply-asar-stat.py')
 
 ROOT = Path('D:/ec/src')
 CACHE = Path('D:/ec/checkpoint')
@@ -28,16 +33,88 @@ def inputs(root):
                 yield file
 
 
+def git(repo, *args):
+    return subprocess.check_output(['git', '-C', str(repo), *args],
+                                   text=True, encoding='utf-8').strip()
+
+
+def revision_identity(root, revisions):
+    stable = {}
+    for name, entry in revisions.items():
+        repo = root.parent / name
+        if (repo / '.git').exists():
+            # Electron's git am creates different commit IDs for identical patched trees.
+            entry = dict(entry, rev=git(repo, 'rev-parse', 'HEAD^{tree}'))
+        stable[name] = entry
+    return stable
+
+
 def identity():
-    revisions = subprocess.check_output(
-        ['cmd.exe', '/d', '/c', 'D:\\depot_tools\\gclient.bat', 'revinfo', '--actual'],
-        cwd=ROOT.parent, text=True, encoding='utf-8')
-    depot = subprocess.check_output(['git', '-C', 'D:/depot_tools', 'rev-parse', 'HEAD'],
-                                    text=True).strip()
-    return {'schema': 1, 'source': os.environ['GITHUB_SHA'], 'depot': depot,
-            'image': os.environ['ImageVersion'], 'revisions': sorted(revisions.splitlines()),
+    with tempfile.TemporaryDirectory(prefix='checkpoint-revisions-', dir=ROOT.parent) as work:
+        output = Path(work) / 'revisions.json'
+        subprocess.run(['cmd.exe', '/d', '/c', 'D:\\depot_tools\\gclient.bat',
+                        'revinfo', '--actual', '--output-json', str(output)],
+                       cwd=ROOT.parent, check=True)
+        revisions = json.loads(output.read_text(encoding='utf-8'))
+    return {'schema': 2, 'args': (ROOT / 'out/Release/args.gn').read_text(encoding='utf-8'),
+            'patches': {name: (HERE / name).read_text(encoding='utf-8')
+                        for name in PATCH_SCRIPTS},
+            'depot': git('D:/depot_tools', 'rev-parse', 'HEAD'),
+            'image': os.environ['ImageVersion'],
+            'revisions': revision_identity(ROOT, revisions),
             'visualStudio': os.environ['vs2022_install'],
             'wrapper': os.environ['SCCACHE_PATH']}
+
+
+def legacy_compatible(root, saved, current):
+    if saved.get('source') != LEGACY_SOURCE:
+        return False
+    if any(saved.get(key) != current.get(key)
+           for key in ('depot', 'image', 'visualStudio', 'wrapper')):
+        return False
+    # Only this known build recipe can migrate its pre-tree-identity checkpoint.
+    git(HERE, 'fetch', '--depth=1', 'origin', LEGACY_SOURCE)
+    if any(git(HERE, 'show', LEGACY_SOURCE + ':' + name) != text.strip()
+           for name, text in current['patches'].items()):
+        return False
+    targets = json.loads((root / 'electron/patches/config.json').read_text(encoding='utf-8'))
+    patched = {entry['repo'] for entry in targets
+               if (root.parent / entry['repo'] / '.git').exists()}
+    previous = {}
+    for line in saved.get('revisions', []):
+        if ': ' not in line or not line.startswith('src'):
+            continue
+        name, value = line.split(': ', 1)
+        if value == 'None':
+            previous[name] = {'url': None, 'rev': None}
+            continue
+        url, separator, revision = value.partition('@')
+        previous[name] = {'url': url, 'rev': revision if separator else None}
+    if previous.keys() != current['revisions'].keys():
+        return False
+    for name, entry in previous.items():
+        now = current['revisions'][name]
+        if entry['url'] != now['url']:
+            return False
+        repo = root.parent / name
+        if (repo / '.git').exists():
+            if name not in patched and entry['rev'] != git(repo, 'rev-parse', 'HEAD'):
+                return False
+        elif entry != now:
+            return False
+    print('Migrating legacy checkpoint with the same pinned Electron patch recipe.', flush=True)
+    return True
+
+
+def compatible(root, saved, current):
+    if saved == current:
+        return True
+    changed = sorted(key for key in saved.keys() | current.keys()
+                     if saved.get(key) != current.get(key))
+    print('Checkpoint identity differences: ' + ', '.join(changed), flush=True)
+    if saved.get('schema') == 1 and current.get('schema') == 2:
+        return legacy_compatible(root, saved, current)
+    return False
 
 
 def save(root, cache, current):
@@ -63,9 +140,16 @@ def restore(root, cache, current):
     if not metadata.exists():
         print('No complete build checkpoint; using compiler cache.', flush=True)
         return False
-    if json.loads(metadata.read_text(encoding='utf-8')) != current:
+    if not compatible(root, json.loads(metadata.read_text(encoding='utf-8')), current):
         print('Checkpoint inputs or runner tools changed; using compiler cache.', flush=True)
         return False
+    if 'args' in current:
+        archived_args = subprocess.check_output(
+            ['7z', 'e', '-so', str(cache / 'outputs.7z'), 'out/Release/args.gn'],
+            text=True, encoding='utf-8')
+        if archived_args != current['args']:
+            print('Checkpoint GN arguments changed; using compiler cache.', flush=True)
+            return False
     started = time.monotonic()
     paths = []
     with gzip.open(cache / 'inputs.json.gz', 'rt', encoding='utf-8') as source:
