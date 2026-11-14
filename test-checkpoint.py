@@ -19,16 +19,27 @@ spec.loader.exec_module(checkpoint)
 
 class CheckpointTests(unittest.TestCase):
     def setUp(self):
+        original_output = checkpoint.subprocess.check_output
+
+        def check_output(command, **kwargs):
+            if command[0] == '7z' and os.environ.get('ZCODE_TEST_7Z'):
+                command = [os.environ['ZCODE_TEST_7Z'], *command[1:]]
+            return original_output(command, **kwargs)
+
+        self.output_patch = patch.object(checkpoint.subprocess, 'check_output', side_effect=check_output)
+        self.output_patch.start()
+        self.addCleanup(self.output_patch.stop)
         self.work = Path(tempfile.mkdtemp(prefix='checkpoint-', dir=HERE))
         self.root = self.work / 'src'
         self.cache = self.work / 'cache'
         self.root.mkdir()
-        self.identity = {'schema': 1, 'source': 'test'}
+        self.identity = {'schema': 2, 'args': 'target_cpu = "x64"\n'}
         self.input = self.root / 'input.cc'
         self.input.write_text('int value;', encoding='utf-8')
         os.utime(self.input, ns=(1600000000123456700, 1600000000123456700))
         self.output = self.root / 'out/Release'
         self.output.mkdir(parents=True)
+        (self.output / 'args.gn').write_text(self.identity['args'], encoding='utf-8')
         (self.output / '.ninja_log').write_text('ninja log', encoding='utf-8')
         (self.output / '.ninja_deps').write_bytes(b'dependencies')
         (self.output / 'value.obj').write_bytes(b'object')
@@ -65,6 +76,7 @@ class CheckpointTests(unittest.TestCase):
             self.skipTest('Archive tool and Ninja are required')
         shutil.rmtree(self.output)
         self.output.mkdir()
+        (self.output / 'args.gn').write_text(self.identity['args'], encoding='utf-8')
         (self.output / 'build.ninja').write_text(
             f'rule copy\n  command = "{sys.executable}" -c '
             '\"import shutil; shutil.copyfile(\'../../input.cc\', \'value.obj\')\"\n'
@@ -91,6 +103,7 @@ class CheckpointTests(unittest.TestCase):
             self.skipTest('Archive tool and Ninja are required')
         shutil.rmtree(self.output)
         self.output.mkdir()
+        (self.output / 'args.gn').write_text(self.identity['args'], encoding='utf-8')
         (self.output / 'build.ninja').write_text(
             f'rule copy\n  command = "{sys.executable}" -c '
             '\"import shutil; shutil.copyfile(\'../../input.cc\', \'$out\')\"\n'
