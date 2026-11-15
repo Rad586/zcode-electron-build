@@ -28,7 +28,8 @@ class TrimTests(unittest.TestCase):
                  'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
-                 'printing/BUILD.gn', 'chrome/browser/ui/BUILD.gn']
+                 'printing/BUILD.gn', 'chrome/browser/ui/BUILD.gn',
+                 'chrome/browser/policy/BUILD.gn']
         files += ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
         with tempfile.TemporaryDirectory(dir=HERE) as work:
             root = Path(work)
@@ -54,6 +55,9 @@ class TrimTests(unittest.TestCase):
             self.assertIn('if (enable_spellcheck) {\n'
                           '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
                           (root / 'chrome/browser/ui/BUILD.gn').read_text())
+            self.assertIn('if (enable_spellcheck) {\n'
+                          '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
+                          (root / 'chrome/browser/policy/BUILD.gn').read_text())
             self.assertIn('assert(enable_printing || enable_pdf)',
                           (root / 'printing/BUILD.gn').read_text())
             self.assertIn('if (enable_print_preview) {\n      deps += [', chrome_test.read_text())

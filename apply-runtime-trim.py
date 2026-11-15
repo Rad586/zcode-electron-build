@@ -67,6 +67,20 @@ def patch(root):
             '    }\n'
             '    if (is_mac) {\n'
             '      deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]')
+    replace('chrome/browser/policy/BUILD.gn',
+            'import("//components/signin/features.gni")',
+            'import("//components/signin/features.gni")\n'
+            'import("//components/spellcheck/spellcheck_build_features.gni")')
+    replace('chrome/browser/policy/BUILD.gn',
+            '    "//chrome/browser/spellchecker",\n', '')
+    replace('chrome/browser/policy/BUILD.gn',
+            '    "//components/spellcheck/browser",\n', '')
+    replace('chrome/browser/policy/BUILD.gn',
+            '    "//services/device/public/cpp:device_features",\n  ]',
+            '    "//services/device/public/cpp:device_features",\n  ]\n'
+            '  if (enable_spellcheck) {\n'
+            '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
+            '  }')
     replace('printing/BUILD.gn',
             '  assert(enable_printing)',
             '  assert(enable_printing || enable_pdf)')
