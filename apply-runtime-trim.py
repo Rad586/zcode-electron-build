@@ -24,6 +24,43 @@ BLINK_FEATURES = (
 )
 
 
+SPELLCHECK_IMPORT = 'import("//components/spellcheck/spellcheck_build_features.gni")'
+DEPENDENCY_LIST = re.compile(
+    r'(?m)^(?P<indent> *)(?P<kind>deps|public_deps|data_deps)\s*\+?=\s*'
+    r'\[(?P<body>(?:"(?:\\.|[^"\\])*"|#[^\n]*|[^"#\[\]])*)\]')
+GN_LABEL = re.compile(r'#[^\n]*|"(?:\\.|[^"\\])*"[ \t]*,?')
+SPELLCHECK_LABEL = re.compile(
+    r'"//(?:chrome/browser/spellchecker|components/spellcheck/browser)(?::[^"\n]+)?"[ \t]*,?')
+
+
+def gate_spellcheck_dependencies(text):
+    def gate(match):
+        body = match['body']
+        labels = []
+
+        def remove_label(token):
+            if not SPELLCHECK_LABEL.fullmatch(token[0]):
+                return token[0]
+            labels.append(token[0])
+            return ''
+
+        body = GN_LABEL.sub(remove_label, body)
+        if not labels:
+            return match[0]
+        indent = match['indent']
+        labels = ', '.join(label.rstrip().rstrip(',') for label in labels)
+        original = match[0]
+        start, end = match.span('body')
+        original = original[:start - match.start()] + body + original[end - match.start():]
+        return (original + '\n' + indent + 'if (enable_spellcheck) {\n' + indent +
+                '  ' + match['kind'] + ' += [ ' + labels + ' ]\n' + indent + '}')
+
+    result = DEPENDENCY_LIST.sub(gate, text)
+    if result != text and SPELLCHECK_IMPORT not in result:
+        result = SPELLCHECK_IMPORT + '\n' + result
+    return result
+
+
 def patch(root):
     root = Path(root)
     edits = {}
@@ -50,47 +87,6 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
-    replace('chrome/browser/ui/BUILD.gn',
-            'import("//components/compose/features.gni")',
-            'import("//components/compose/features.gni")\n'
-            'import("//components/spellcheck/spellcheck_build_features.gni")')
-    replace('chrome/browser/ui/BUILD.gn',
-            '      "//chrome/browser/spellchecker",\n', '')
-    replace('chrome/browser/ui/BUILD.gn',
-            '      "//components/spellcheck/browser",\n', '')
-    replace('chrome/browser/ui/BUILD.gn',
-            '      "//components/undo",\n    ]\n    if (is_mac) {\n'
-            '      deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]',
-            '      "//components/undo",\n    ]\n'
-            '    if (enable_spellcheck) {\n'
-            '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
-            '    }\n'
-            '    if (is_mac) {\n'
-            '      deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]')
-    replace('chrome/browser/policy/BUILD.gn',
-            'import("//components/signin/features.gni")',
-            'import("//components/signin/features.gni")\n'
-            'import("//components/spellcheck/spellcheck_build_features.gni")')
-    replace('chrome/browser/policy/BUILD.gn',
-            '    "//chrome/browser/spellchecker",\n', '')
-    replace('chrome/browser/policy/BUILD.gn',
-            '    "//components/spellcheck/browser",\n', '')
-    replace('chrome/browser/policy/BUILD.gn',
-            '    "//services/device/public/cpp:device_features",\n  ]',
-            '    "//services/device/public/cpp:device_features",\n  ]\n'
-            '  if (enable_spellcheck) {\n'
-            '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
-            '  }')
-    replace('chrome/browser/BUILD.gn',
-            '\n    "//chrome/browser/spellchecker",\n', '\n')
-    replace('chrome/browser/BUILD.gn',
-            '    "//components/spellcheck/browser",\n', '')
-    replace('chrome/browser/BUILD.gn',
-            '    "//ui/webui/tracked_element",\n  ]',
-            '    "//ui/webui/tracked_element",\n  ]\n'
-            '  if (enable_spellcheck) {\n'
-            '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
-            '  }')
     replace('printing/BUILD.gn',
             '  assert(enable_printing)',
             '  assert(enable_printing || enable_pdf)')
@@ -161,6 +157,14 @@ def patch(root):
             '  auto* command_line = base::CommandLine::ForCurrentProcess();\n'
             '  command_line->AppendSwitch("disable-renderer-accessibility");\n\n'
             '#if BUILDFLAG(IS_WIN)')
+
+    for file in root.rglob('BUILD.gn'):
+        text = edits.get(file)
+        if text is None:
+            text = file.read_text(encoding='utf-8')
+        gated = gate_spellcheck_dependencies(text)
+        if gated != text:
+            edits[file] = gated
 
     for file, text in edits.items():
         file.write_text(text, encoding='utf-8', newline='\n')

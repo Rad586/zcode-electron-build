@@ -29,7 +29,8 @@ class TrimTests(unittest.TestCase):
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'chrome/browser/ui/BUILD.gn',
-                 'chrome/browser/policy/BUILD.gn', 'chrome/browser/BUILD.gn']
+                 'chrome/browser/policy/BUILD.gn', 'chrome/browser/BUILD.gn',
+                 'chrome/browser/sync/BUILD.gn']
         files += ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
         with tempfile.TemporaryDirectory(dir=HERE) as work:
             root = Path(work)
@@ -62,7 +63,12 @@ class TrimTests(unittest.TestCase):
             self.assertIn('if (enable_spellcheck) {\n'
                           '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
                           browser)
-            self.assertIn('      "//chrome/browser/spellchecker:impl",', browser)
+            self.assertIn('"//chrome/browser/spellchecker:impl"', browser)
+            sync = (root / 'chrome/browser/sync/BUILD.gn').read_text()
+            self.assertIn('if (enable_spellcheck) {\n'
+                          '    deps += [ "//components/spellcheck/browser" ]', sync)
+            self.assertIn('if (enable_spellcheck) {\n'
+                          '    deps += [ "//chrome/browser/spellchecker" ]', sync)
             self.assertIn('assert(enable_printing || enable_pdf)',
                           (root / 'printing/BUILD.gn').read_text())
             self.assertIn('if (enable_print_preview) {\n      deps += [', chrome_test.read_text())
@@ -83,6 +89,32 @@ class TrimTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 trim.patch(root)
             self.assertEqual(before, {name: (root / name).read_bytes() for name in files})
+
+    def test_spellcheck_dependency_lists(self):
+        source = '''source_set("sample") {
+  deps = [ "//base", "//chrome/browser/spellchecker" ]
+  public_deps += [
+    # Keep comment [ "//chrome/browser/spellchecker" ].
+    "//components/spellcheck/browser:test_support",
+    "//components/spellcheck:buildflags",
+  ]
+  if (is_win) {
+    data_deps = [ "//chrome/browser/spellchecker:impl" ]
+  }
+}
+'''
+        result = trim.gate_spellcheck_dependencies(source)
+        self.assertEqual(result.count(trim.SPELLCHECK_IMPORT), 1)
+        self.assertIn('deps = [ "//base", ]', result)
+        self.assertIn('if (enable_spellcheck) {\n'
+                      '    deps += [ "//chrome/browser/spellchecker" ]', result)
+        self.assertIn('public_deps += [ "//components/spellcheck/browser:test_support" ]', result)
+        self.assertIn('    if (enable_spellcheck) {\n'
+                      '      data_deps += [ "//chrome/browser/spellchecker:impl" ]', result)
+        self.assertIn('"//components/spellcheck:buildflags",', result)
+        self.assertIn('# Keep comment [ "//chrome/browser/spellchecker" ].', result)
+        self.assertEqual(trim.gate_spellcheck_dependencies('deps = [ "//base" ]'),
+                         'deps = [ "//base" ]')
 
     def test_icu_with_real_v8_intl(self):
         runtime = Path('F:/zcode/diagnostics/runtimes/electron-44.10.2-win32-x64')
