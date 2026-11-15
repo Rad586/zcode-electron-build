@@ -104,6 +104,24 @@ def patch(root):
     replace('components/spellcheck/spellcheck_build_features.gni',
             'enable_spellcheck = use_blink', 'enable_spellcheck = false')
 
+    replace('gpu/ipc/service/gpu_init.cc',
+            '    gl::SolidColorPoolFactory solid_color_factory;\n'
+            '    if (dawn_context_provider_) {',
+            '    gl::SolidColorPoolFactory solid_color_factory;\n'
+            '#if BUILDFLAG(SKIA_USE_DAWN)\n'
+            '    if (dawn_context_provider_) {')
+    replace('gpu/ipc/service/gpu_init.cc',
+            '      d3d12_command_queue = dawn_context_provider_->GetD3D12CommandQueue();\n'
+            '#if BUILDFLAG(SKIA_USE_DAWN)\n',
+            '      d3d12_command_queue = dawn_context_provider_->GetD3D12CommandQueue();\n')
+    replace('gpu/ipc/service/gpu_init.cc',
+            '#endif  // BUILDFLAG(SKIA_USE_DAWN)\n'
+            '    } else {\n'
+            '      d3d11_device = gl::QueryD3D11DeviceObjectFromANGLE();',
+            '    } else\n'
+            '#endif  // BUILDFLAG(SKIA_USE_DAWN)\n'
+            '    {\n'
+            '      d3d11_device = gl::QueryD3D11DeviceObjectFromANGLE();')
     replace('gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
             '    DawnContextProvider* dawn_context_provider /*=nullptr*/) {\n',
             '    DawnContextProvider* dawn_context_provider /*=nullptr*/) {\n'

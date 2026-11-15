@@ -28,6 +28,7 @@ class TrimTests(unittest.TestCase):
                  'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
                  'electron/build/args/all.gn',
                  'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
+                 'gpu/ipc/service/gpu_init.cc',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
@@ -71,6 +72,13 @@ class TrimTests(unittest.TestCase):
             self.assertIn('#if BUILDFLAG(SKIA_USE_DAWN)', guarded)
             self.assertIn('dawn_context_provider->GetD3D11Device()', guarded)
             self.assertIn('return gl::DirectCompositionSupported() &&', direct_composition)
+            gpu_init = (root / 'gpu/ipc/service/gpu_init.cc').read_text()
+            composition = gpu_init.split('gl::SolidColorPoolFactory solid_color_factory;', 1)[1]
+            dawn, angle = composition.split('#endif  // BUILDFLAG(SKIA_USE_DAWN)', 1)
+            self.assertTrue(dawn.startswith('\n#if BUILDFLAG(SKIA_USE_DAWN)\n'))
+            self.assertIn('dawn_context_provider_->GetD3D11Device()', dawn)
+            self.assertIn('dawn_context_provider_->GetD3D12CommandQueue()', dawn)
+            self.assertTrue(angle.startswith('\n    {\n      d3d11_device = gl::QueryD3D11DeviceObjectFromANGLE();'))
             self.assertIn('if (enable_spellcheck) {\n'
                           '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
                           (root / 'chrome/browser/ui/BUILD.gn').read_text())
