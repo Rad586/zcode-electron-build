@@ -1,6 +1,7 @@
 """Preserve Ninja outputs and input timestamps between disposable runners."""
 import argparse
 import gzip
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,11 @@ def revision_identity(root, revisions):
     return stable
 
 
+def input_content(file):
+    with file.open('rb') as source:
+        return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
 def identity():
     with tempfile.TemporaryDirectory(prefix='checkpoint-revisions-', dir=ROOT.parent) as work:
         output = Path(work) / 'revisions.json'
@@ -56,7 +62,7 @@ def identity():
                         'revinfo', '--actual', '--output-json', str(output)],
                        cwd=ROOT.parent, check=True)
         revisions = json.loads(output.read_text(encoding='utf-8'))
-    return {'schema': 2, 'args': (ROOT / 'out/Release/args.gn').read_text(encoding='utf-8'),
+    return {'schema': 3, 'args': (ROOT / 'out/Release/args.gn').read_text(encoding='utf-8'),
             'patches': {name: (HERE / name).read_text(encoding='utf-8')
                         for name in PATCH_SCRIPTS},
             'depot': git('D:/depot_tools', 'rev-parse', 'HEAD'),
@@ -112,7 +118,25 @@ def compatible(root, saved, current):
     changed = sorted(key for key in saved.keys() | current.keys()
                      if saved.get(key) != current.get(key))
     print('Checkpoint identity differences: ' + ', '.join(changed), flush=True)
-    if saved.get('schema') == 1 and current.get('schema') == 2:
+    if current.get('schema') == 3:
+        if saved.get('schema') == 2:
+            return dict(saved, schema=3) == current
+        if saved.get('schema') == 3:
+            fixed = (saved.keys() | current.keys()) - {'patches', 'revisions'}
+            if any(saved.get(key) != current.get(key) for key in fixed):
+                return False
+            old, new = saved['revisions'], current['revisions']
+            if old.keys() != new.keys():
+                return False
+            for name in old:
+                repo = root.parent / name
+                if name in ('src', 'src/electron') and (repo / '.git').exists():
+                    if old[name].get('url') != new[name].get('url'):
+                        return False
+                elif old[name] != new[name]:
+                    return False
+            return True
+    if saved.get('schema') == 1 and current.get('schema') in (2, 3):
         return legacy_compatible(root, saved, current)
     return False
 
@@ -122,8 +146,10 @@ def save(root, cache, current):
     started = time.monotonic()
     with gzip.open(cache / 'inputs.json.gz', 'wt', encoding='utf-8') as output:
         for file in inputs(root):
-            output.write(json.dumps([file.relative_to(root).as_posix(),
-                                     file.stat().st_mtime_ns], separators=(',', ':')) + '\n')
+            record = [file.relative_to(root).as_posix(), file.stat().st_mtime_ns]
+            if current.get('schema') == 3:
+                record.append(input_content(file))
+            output.write(json.dumps(record, separators=(',', ':')) + '\n')
     subprocess.run(['7z', 'a', '-t7z', '-mx=1', '-mmt=2', '-bsp0',
                     str(cache / 'outputs.7z'), 'out/Release'], cwd=root, check=True)
     if (cache / 'outputs.7z').stat().st_size > 7 * 1024 ** 3:
@@ -140,7 +166,8 @@ def restore(root, cache, current):
     if not metadata.exists():
         print('No complete build checkpoint; using compiler cache.', flush=True)
         return False
-    if not compatible(root, json.loads(metadata.read_text(encoding='utf-8')), current):
+    saved = json.loads(metadata.read_text(encoding='utf-8'))
+    if not compatible(root, saved, current):
         print('Checkpoint inputs or runner tools changed; using compiler cache.', flush=True)
         return False
     if 'args' in current:
@@ -151,25 +178,38 @@ def restore(root, cache, current):
             print('Checkpoint GN arguments changed; using compiler cache.', flush=True)
             return False
     started = time.monotonic()
-    paths = []
+    paths = {}
     with gzip.open(cache / 'inputs.json.gz', 'rt', encoding='utf-8') as source:
         for line in source:
-            name, stamp = json.loads(line)
+            record = json.loads(line)
+            if len(record) != (3 if saved.get('schema') == 3 else 2):
+                raise RuntimeError('Invalid checkpoint input record')
+            name, stamp = record[:2]
             relative = Path(name)
             if relative.is_absolute() or relative.drive or '..' in relative.parts:
                 raise RuntimeError('Unsafe checkpoint input path: ' + name)
-            paths.append((root / relative, stamp))
+            paths[root / relative] = (stamp, record[2] if len(record) == 3 else None)
     if (root / 'out/Release/.ninja_log').exists():
         raise RuntimeError('Build output already exists before checkpoint restore')
     subprocess.run(['7z', 'x', '-y', '-bsp0', str(cache / 'outputs.7z'), '-o' + str(root)],
                    check=True)
-    restored = 0
-    for file, stamp in paths:
-        if file.is_file() and not file.is_symlink():
-            os.utime(file, ns=(file.stat().st_atime_ns, stamp))
-            restored += 1
+    restored, changed = 0, 0
+    newest_output = max(file.stat().st_mtime_ns
+                        for file in (root / 'out/Release').rglob('*') if file.is_file())
+    changed_stamp = max(time.time_ns(), newest_output + 1_000_000)
+    for file in inputs(root):
+        previous = paths.get(file)
+        if previous is not None:
+            stamp, content = previous
+            if content is None or input_content(file) == content:
+                os.utime(file, ns=(file.stat().st_atime_ns, stamp))
+                restored += 1
+                continue
+        os.utime(file, ns=(file.stat().st_atime_ns,
+                           max(file.stat().st_mtime_ns, changed_stamp)))
+        changed += 1
     print(f'Restored Ninja outputs and {restored} input timestamps in '
-          f'{time.monotonic() - started:.1f}s', flush=True)
+          f'{time.monotonic() - started:.1f}s; {changed} changed inputs retained', flush=True)
     return True
 
 

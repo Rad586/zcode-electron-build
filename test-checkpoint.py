@@ -33,7 +33,9 @@ class CheckpointTests(unittest.TestCase):
         self.root = self.work / 'src'
         self.cache = self.work / 'cache'
         self.root.mkdir()
-        self.identity = {'schema': 2, 'args': 'target_cpu = "x64"\n'}
+        self.identity = {'schema': 3, 'args': 'target_cpu = "x64"\n',
+                         'patches': {'test': 'original'},
+                         'revisions': {'src': {'url': 'https://example.invalid/src', 'rev': 'original'}}}
         self.input = self.root / 'input.cc'
         self.input.write_text('int value;', encoding='utf-8')
         os.utime(self.input, ns=(1600000000123456700, 1600000000123456700))
@@ -196,6 +198,94 @@ class CheckpointTests(unittest.TestCase):
                 patch.object(checkpoint.subprocess, 'run') as run:
             self.assertFalse(checkpoint.restore(self.root, self.cache, current))
             run.assert_not_called()
+
+    def test_source_changes_rebuild_dependents_only(self):
+        archive = os.environ.get('ZCODE_TEST_7Z')
+        ninja = os.environ.get('ZCODE_TEST_NINJA')
+        if not archive or not ninja:
+            self.skipTest('Archive tool and Ninja are required')
+        (self.root / '.git').mkdir()
+        header = self.root / 'shared.h'
+        header.write_text('old', encoding='utf-8')
+        other = self.root / 'other.cc'
+        other.write_text('unrelated', encoding='utf-8')
+        shutil.rmtree(self.output)
+        self.output.mkdir()
+        (self.output / 'args.gn').write_text(self.identity['args'], encoding='utf-8')
+        (self.output / 'build.ninja').write_text(
+            f'rule copy\n  command = "{sys.executable}" -c '
+            '\"from pathlib import Path; Path(\'$out\').write_bytes(Path(\'$in\').read_bytes())\"\n'
+            'build first.obj: copy ../../shared.h\n'
+            'build second.obj: copy ../../shared.h\n'
+            'build unrelated.obj: copy ../../other.cc\n'
+            'build app: copy first.obj | second.obj\n', encoding='utf-8')
+        run = checkpoint.subprocess.run
+        run([ninja, '-C', str(self.output)], check=True)
+        stamp = header.stat().st_mtime_ns
+        unrelated_stamp = (self.output / 'unrelated.obj').stat().st_mtime_ns
+
+        def archived(command, **kwargs):
+            return run([archive, *command[1:]], **kwargs)
+
+        with patch.object(checkpoint.subprocess, 'run', side_effect=archived):
+            checkpoint.save(self.root, self.cache, self.identity)
+            shutil.rmtree(self.root / 'out')
+            header.write_text('new', encoding='utf-8')
+            os.utime(header, ns=(stamp, stamp))
+            other.touch()
+            current = dict(self.identity, patches={'test': 'optimized'},
+                           revisions={'src': {'url': 'https://example.invalid/src', 'rev': 'optimized'}})
+            self.assertTrue(checkpoint.restore(self.root, self.cache, current))
+        result = run([ninja, '-C', str(self.output)], check=True, capture_output=True, text=True)
+        self.assertIn('[3/3]', result.stdout)
+        self.assertNotIn('unrelated.obj', result.stdout)
+        self.assertEqual((self.output / 'unrelated.obj').stat().st_mtime_ns, unrelated_stamp)
+        self.assertEqual((self.output / 'app').read_text(), 'new')
+        self.assertIn('no work to do', run([ninja, '-C', str(self.output)], check=True,
+                                         capture_output=True, text=True).stdout)
+
+    def test_compatibility_keeps_tools_arguments_and_dependencies_strict(self):
+        (self.root / '.git').mkdir()
+        current = dict(self.identity, image='image', depot='depot', visualStudio='vs', wrapper='cache')
+        for field in ('args', 'image', 'depot', 'visualStudio', 'wrapper'):
+            with self.subTest(field=field):
+                self.assertFalse(checkpoint.compatible(self.root, current, dict(current, **{field: 'changed'})))
+        changed = dict(current, revisions={'src': {'url': 'https://different.invalid', 'rev': 'new'}})
+        self.assertFalse(checkpoint.compatible(self.root, current, changed))
+        dependency = {'url': 'https://example.invalid/compiler', 'rev': 'old'}
+        saved = dict(current, revisions=dict(current['revisions'], compiler=dependency))
+        changed = dict(saved, revisions=dict(saved['revisions'], compiler=dict(dependency, rev='new')))
+        self.assertFalse(checkpoint.compatible(self.root, saved, changed))
+
+    def test_v2_migrates_only_with_identical_sources(self):
+        (self.root / '.git').mkdir()
+        old = dict(self.identity, schema=2)
+        self.assertTrue(checkpoint.compatible(self.root, old, self.identity))
+        self.assertFalse(checkpoint.compatible(self.root, old, dict(self.identity, patches={'test': 'new'})))
+        archive = os.environ.get('ZCODE_TEST_7Z')
+        if not archive:
+            self.skipTest('Archive tool is required')
+        run = checkpoint.subprocess.run
+        with patch.object(checkpoint.subprocess, 'run',
+                          side_effect=lambda command, **kwargs: run([archive, *command[1:]], **kwargs)):
+            checkpoint.save(self.root, self.cache, old)
+            shutil.rmtree(self.root / 'out')
+            self.assertTrue(checkpoint.restore(self.root, self.cache, self.identity))
+
+    def test_new_inputs_get_newer_timestamp_than_restored_outputs(self):
+        archive = os.environ.get('ZCODE_TEST_7Z')
+        if not archive:
+            self.skipTest('Archive tool is required')
+        run = checkpoint.subprocess.run
+        with patch.object(checkpoint.subprocess, 'run',
+                          side_effect=lambda command, **kwargs: run([archive, *command[1:]], **kwargs)):
+            checkpoint.save(self.root, self.cache, self.identity)
+            shutil.rmtree(self.root / 'out')
+            added = self.root / 'new.h'
+            added.write_text('new', encoding='utf-8')
+            os.utime(added, ns=(1_000_000_000, 1_000_000_000))
+            self.assertTrue(checkpoint.restore(self.root, self.cache, self.identity))
+        self.assertGreater(added.stat().st_mtime_ns, (self.output / 'value.obj').stat().st_mtime_ns)
 
     def test_inputs_exclude_outputs_and_git(self):
         (self.root / '.git').mkdir()

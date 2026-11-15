@@ -1,6 +1,6 @@
 name: Build Electron kernel with checkpoints
 
-run-name: Resume Electron ${{ inputs.predecessor || github.run_id }}
+run-name: ${{ inputs.checkpoint_only && 'Checkpoint Electron' || 'Resume Electron' }} ${{ inputs.predecessor || github.run_id }}
 
 on:
   workflow_dispatch:
@@ -9,6 +9,11 @@ on:
         description: Previous run to continue after a workflow update
         required: false
         type: string
+      checkpoint_only:
+        description: Migrate an unchanged-source checkpoint without compiling or publishing a runtime
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -72,11 +77,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: D:\ec\checkpoint
-          key: ninja-v2-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ninja-v3-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            ninja-v3-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-
             ninja-v2-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-
             ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-4dbfd300a0041b5eef4faf03c6674f0192e1ba89-
       - name: Patch kernel and configure
+        id: configure
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -102,10 +109,14 @@ jobs:
           "@ | Set-Content -Encoding utf8NoBOM D:\ec\src\out\Release\args.gn
           python "$env:GITHUB_WORKSPACE\checkpoint.py" restore
           if ($LASTEXITCODE) { throw 'Build checkpoint restore failed' }
+          if ('${{ inputs.checkpoint_only }}' -eq 'true' -and -not (Test-Path D:\ec\src\out\Release\.ninja_log)) {
+            throw 'Checkpoint migration requires compatible compiled outputs'
+          }
           Set-Location D:\ec\src
           & D:\depot_tools\gn.bat gen out/Release
           if ($LASTEXITCODE) { throw 'GN generation failed' }
       - name: Compile Windows x64 runtime
+        if: ${{ !inputs.checkpoint_only }}
         id: compile
         shell: pwsh
         run: |
@@ -113,7 +124,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Compilation incomplete; compiler cache retained for the next run' }
       - name: Prepare build checkpoint
         id: prepare_checkpoint
-        if: ${{ !cancelled() && steps.compile.outcome == 'failure' }}
+        if: ${{ !cancelled() && (inputs.checkpoint_only && steps.configure.outcome == 'success' || steps.compile.outcome == 'failure' || steps.compile.outcome == 'success') }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -127,7 +138,7 @@ jobs:
           path: D:\ec\checkpoint
           key: ${{ steps.checkpoint.outputs.cache-primary-key }}
       - name: Require completed compilation
-        if: ${{ !cancelled() && steps.compile.outcome != 'success' }}
+        if: ${{ !cancelled() && !inputs.checkpoint_only && steps.compile.outcome != 'success' }}
         shell: pwsh
         run: throw 'Compilation incomplete; build checkpoint and compiler cache retained for continuation'
       - name: Report compiler cache
@@ -136,6 +147,7 @@ jobs:
         run: |
           & $env:SCCACHE_PATH --show-stats
       - name: Validate native kernel
+        if: ${{ !inputs.checkpoint_only }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -151,6 +163,7 @@ jobs:
           Remove-Item Env:ELECTRON_RUN_AS_NODE
           @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat')} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.checkpoint_only }}
         with:
           name: electron-44.10.2-frame-cap-win32-x64
           path: |
