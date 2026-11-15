@@ -29,17 +29,23 @@ DEPENDENCY_LIST = re.compile(
     r'(?m)^(?P<indent> *)(?P<kind>deps|public_deps|data_deps)\s*\+?=\s*'
     r'\[(?P<body>(?:"(?:\\.|[^"\\])*"|#[^\n]*|[^"#\[\]])*)\]')
 GN_LABEL = re.compile(r'#[^\n]*|"(?:\\.|[^"\\])*"[ \t]*,?')
-SPELLCHECK_LABEL = re.compile(
-    r'"//(?:chrome/browser/spellchecker|components/spellcheck/browser)(?::[^"\n]+)?"[ \t]*,?')
+DEPENDENCY_FEATURES = (
+    ('enable_spellcheck', SPELLCHECK_IMPORT, re.compile(
+        r'"//(?:chrome/browser/spellchecker|components/spellcheck/browser)(?::[^"\n]+)?"[ \t]*,?')),
+    ('enable_printing', 'import("//printing/buildflags/buildflags.gni")', re.compile(
+        r'"//chrome/browser/printing(?::[^"\n]+)?"[ \t]*,?')),
+    ('enable_print_preview', 'import("//printing/buildflags/buildflags.gni")', re.compile(
+        r'"//chrome/browser/ui/webui/print_preview(?::[^"\n]+)?"[ \t]*,?')),
+)
 
 
-def gate_spellcheck_dependencies(text):
+def gate_feature_dependencies(text, feature, feature_import, label_pattern):
     def gate(match):
         body = match['body']
         labels = []
 
         def remove_label(token):
-            if not SPELLCHECK_LABEL.fullmatch(token[0]):
+            if not label_pattern.fullmatch(token[0]):
                 return token[0]
             labels.append(token[0])
             return ''
@@ -52,13 +58,19 @@ def gate_spellcheck_dependencies(text):
         original = match[0]
         start, end = match.span('body')
         original = original[:start - match.start()] + body + original[end - match.start():]
-        return (original + '\n' + indent + 'if (enable_spellcheck) {\n' + indent +
+        return (original + '\n' + indent + 'if (' + feature + ') {\n' + indent +
                 '  ' + match['kind'] + ' += [ ' + labels + ' ]\n' + indent + '}')
 
     result = DEPENDENCY_LIST.sub(gate, text)
-    if result != text and SPELLCHECK_IMPORT not in result:
-        result = SPELLCHECK_IMPORT + '\n' + result
+    if result != text and feature_import not in result:
+        result = feature_import + '\n' + result
     return result
+
+
+def gate_trimmed_dependencies(text):
+    for feature, feature_import, label_pattern in DEPENDENCY_FEATURES:
+        text = gate_feature_dependencies(text, feature, feature_import, label_pattern)
+    return text
 
 
 def patch(root):
@@ -90,11 +102,6 @@ def patch(root):
     replace('printing/BUILD.gn',
             '  assert(enable_printing)',
             '  assert(enable_printing || enable_pdf)')
-    replace('chrome/test/BUILD.gn',
-            '      "//chrome/browser/ui/webui/print_preview:interactive_ui_tests",\n    ]',
-            '    ]\n\n    if (enable_print_preview) {\n'
-            '      deps += [ "//chrome/browser/ui/webui/print_preview:interactive_ui_tests" ]\n'
-            '    }')
     for anchor in (
         '      "$root_gen_dir/content/browser/devtools/devtools_resources.pak",\n',
         '      "//content/browser/devtools:devtools_resources",\n',
@@ -162,7 +169,7 @@ def patch(root):
         text = edits.get(file)
         if text is None:
             text = file.read_text(encoding='utf-8')
-        gated = gate_spellcheck_dependencies(text)
+        gated = gate_trimmed_dependencies(text)
         if gated != text:
             edits[file] = gated
 
