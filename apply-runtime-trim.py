@@ -81,6 +81,16 @@ def patch(root):
             '  if (enable_spellcheck) {\n'
             '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
             '  }')
+    replace('chrome/browser/BUILD.gn',
+            '\n    "//chrome/browser/spellchecker",\n', '\n')
+    replace('chrome/browser/BUILD.gn',
+            '    "//components/spellcheck/browser",\n', '')
+    replace('chrome/browser/BUILD.gn',
+            '    "//ui/webui/tracked_element",\n  ]',
+            '    "//ui/webui/tracked_element",\n  ]\n'
+            '  if (enable_spellcheck) {\n'
+            '    deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
+            '  }')
     replace('printing/BUILD.gn',
             '  assert(enable_printing)',
             '  assert(enable_printing || enable_pdf)')
