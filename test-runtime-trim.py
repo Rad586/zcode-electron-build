@@ -31,7 +31,8 @@ class TrimTests(unittest.TestCase):
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
-                 'media/cdm/library_cdm/cdm_paths.gni', 'chrome/browser/ui/BUILD.gn',
+                 'media/cdm/library_cdm/cdm_paths.gni', 'media/cdm/cdm_paths.h',
+                 'chrome/browser/ui/BUILD.gn',
                  'chrome/browser/policy/BUILD.gn', 'chrome/browser/BUILD.gn',
                  'chrome/browser/sync/BUILD.gn', 'chrome/browser/guest_view/BUILD.gn']
         files += ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
@@ -93,6 +94,8 @@ class TrimTests(unittest.TestCase):
             self.assertIn('if (enable_library_cdms || is_win) {\n    flags += [', media)
             self.assertIn('if (enable_library_cdms || is_win) {\n  static_library("cdm_paths") {',
                           (root / 'media/cdm/BUILD.gn').read_text())
+            self.assertIn('#if !BUILDFLAG(ENABLE_LIBRARY_CDMS) && !BUILDFLAG(IS_WIN)',
+                          (root / 'media/cdm/cdm_paths.h').read_text())
             self.assertIn('assert(enable_printing || enable_pdf)',
                           (root / 'printing/BUILD.gn').read_text())
             self.assertIn('if (enable_print_preview) {\n      deps += [', chrome_test.read_text())

@@ -118,6 +118,11 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
+    replace('media/cdm/cdm_paths.h',
+            '#if !BUILDFLAG(ENABLE_LIBRARY_CDMS)\n'
+            '#error This file only applies to builds that enable_library_cdms.\n',
+            '#if !BUILDFLAG(ENABLE_LIBRARY_CDMS) && !BUILDFLAG(IS_WIN)\n'
+            '#error This file requires library CDMs or Windows.\n')
     replace('media/cdm/library_cdm/cdm_paths.gni',
             'assert(enable_library_cdms)', 'assert(enable_library_cdms || is_win)')
     replace('media/BUILD.gn',
