@@ -1,0 +1,105 @@
+"""Exercise the pinned trim anchors and ICU resource package independently."""
+import importlib.util
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+HERE = Path(__file__).resolve().parent
+CHROMIUM = HERE.parent / 'chromium-152.0.7977.169'
+ELECTRON = HERE.parent / 'electron-44.10.2'
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, HERE / (name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+trim = load('apply-runtime-trim')
+icu = load('trim-icu')
+
+
+class TrimTests(unittest.TestCase):
+    def test_pinned_patch_is_atomic_on_anchor_failure(self):
+        files = ['build/config/locales.gni', 'components/spellcheck/spellcheck_build_features.gni',
+                 'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
+                 'third_party/blink/renderer/platform/runtime_enabled_features.json5',
+                 'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn']
+        files += ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
+        with tempfile.TemporaryDirectory(dir=HERE) as work:
+            root = Path(work)
+            for name in files:
+                source = ELECTRON / name[9:] if name.startswith('electron/') else CHROMIUM / name
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+            trim.patch(root)
+            paks = (root / 'electron/build/electron_paks.gni').read_text()
+            self.assertNotIn('devtools_resources.pak', paks)
+            self.assertIn('pdf_resources.pak', paks)
+            self.assertIn('tracing_resources.pak', paks)
+            features = (root / files[4]).read_text()
+            for _, feature in trim.IDL_GATES.values():
+                self.assertIn('name: "' + feature + '"', features)
+            before = {name: (root / name).read_bytes() for name in files}
+            with self.assertRaises(RuntimeError):
+                trim.patch(root)
+            self.assertEqual(before, {name: (root / name).read_bytes() for name in files})
+
+    def test_icu_with_real_v8_intl(self):
+        runtime = Path('F:/zcode/diagnostics/runtimes/electron-44.10.2-win32-x64')
+        original = (runtime / 'icudtl.dat').read_bytes()
+        result = icu.trim(original)
+        self.assertEqual(result, icu.trim(result))
+        _, old = icu.entries(original)
+        _, new = icu.entries(result)
+        new = dict(new)
+        for name, payload in old:
+            relative = name.split('/', 1)[1]
+            if not relative.endswith('.res') or relative.startswith('brkitr/'):
+                self.assertEqual(new[name], payload)
+        self.assertNotIn('icudt78l/fr.res', new)
+        self.assertNotIn('icudt78l/lang/de.res', new)
+        for name in ['root', 'en', 'zh', 'zh_Hant', 'pool', 'supplementalData',
+                     'plurals', 'numberingSystems', 'zoneinfo64', 'metadata', 'icuver', 'icustd']:
+            self.assertIn('icudt78l/' + name + '.res', new)
+        with tempfile.TemporaryDirectory(dir=HERE) as work:
+            root = Path(work)
+            (root / 'icudtl.dat').write_bytes(result)
+            for name in ['electron.exe', 'ffmpeg.dll', 'snapshot_blob.bin', 'v8_context_snapshot.bin']:
+                shutil.copyfile(runtime / name, root / name)
+            import os
+            env = dict(os.environ, ELECTRON_RUN_AS_NODE='1')
+            script = """
+const a = require('node:assert/strict');
+for (const locale of ['en-US', 'en-GB', 'zh-CN', 'zh-TW', 'zh-HK']) {
+  a.equal(Intl.DateTimeFormat.supportedLocalesOf([locale]).length, 1);
+  a.equal(Intl.NumberFormat.supportedLocalesOf([locale]).length, 1);
+  a.equal(Intl.Collator.supportedLocalesOf([locale]).length, 1);
+  a(new Intl.DateTimeFormat(locale, {timeZone:'Asia/Shanghai', dateStyle:'full'}).format(0));
+  a(new Intl.NumberFormat(locale, {style:'currency', currency:'CNY'}).format(12345.6));
+  a(new Intl.DisplayNames(locale, {type:'region'}).of('TW'));
+  a(new Intl.RelativeTimeFormat(locale).format(-2, 'day'));
+  a(new Intl.ListFormat(locale).format(['甲','乙']));
+  a([...new Intl.Segmenter(locale, {granularity:'word'}).segment('中文测试 hello world')].length > 2);
+  a(new Intl.Collator(locale).compare('abc', 'xyz') < 0);
+}
+a.equal(Intl.DateTimeFormat.supportedLocalesOf(['fr', 'de', 'ja']).length, 0);
+for (const zone of ['UTC', 'Asia/Shanghai', 'Asia/Taipei', 'America/New_York', 'Europe/London'])
+  a(new Intl.DateTimeFormat('zh-CN', {timeZone:zone}).format(0));
+for (const encoding of ['gb18030', 'big5', 'shift_jis', 'windows-1252', 'euc-kr'])
+  a(new TextDecoder(encoding).decode(new Uint8Array([65])) === 'A');
+a.equal('e\\u0301'.normalize('NFC'), 'é');
+a(new Intl.Segmenter('zh-CN').segment('👨‍👩‍👧‍👦')[Symbol.iterator]().next().value.segment.length > 1);
+console.log('ICU Intl checks passed');
+"""
+            subprocess.run([str(root / 'electron.exe'), '-e', script], env=env,
+                           check=True, capture_output=True, text=True, timeout=45,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+if __name__ == '__main__':
+    unittest.main()
