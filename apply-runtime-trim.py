@@ -84,6 +84,13 @@ def patch(root):
             raise RuntimeError(f'{name}: expected one patch anchor: {old[:70]}')
         edits[file] = text.replace(old, new)
 
+    file = root / '.gn'
+    text = file.read_text(encoding='utf-8')
+    if re.search(r'(?m)^\s*(?:root|root_patterns)\s*=', text):
+        raise RuntimeError('GN root scope is already configured')
+    edits[file] = text + '\nroot = "//electron:electron_dist_zip"\n' + \
+        'root_patterns = [ "//electron:electron_dist_zip" ]\n'
+
     replace('build/config/locales.gni',
             'locales_without_pseudolocales = platform_pak_locales - pseudolocales',
             'if (is_win) {\n'

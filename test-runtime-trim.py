@@ -39,6 +39,8 @@ class TrimTests(unittest.TestCase):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
+            (root / '.gn').write_text('buildconfig = "//build/config/BUILDCONFIG.gn"\n')
+            files.append('.gn')
             devtools = root / 'chrome/browser/devtools/BUILD.gn'
             devtools.parent.mkdir(parents=True, exist_ok=True)
             devtools.write_text('if (enable_devtools_frontend) {\n'
@@ -53,6 +55,9 @@ class TrimTests(unittest.TestCase):
                                    '    ]\n')
             files.append('chrome/test/BUILD.gn')
             trim.patch(root)
+            dotfile = (root / '.gn').read_text()
+            self.assertIn('root = "//electron:electron_dist_zip"\n', dotfile)
+            self.assertIn('root_patterns = [ "//electron:electron_dist_zip" ]\n', dotfile)
             self.assertIn('if (enable_spellcheck) {\n'
                           '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
                           (root / 'chrome/browser/ui/BUILD.gn').read_text())
