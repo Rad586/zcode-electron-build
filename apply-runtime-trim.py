@@ -106,6 +106,12 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
+    replace('media/BUILD.gn',
+            'if (enable_library_cdms) {\n  import("//media/cdm/library_cdm/cdm_paths.gni")',
+            'if (enable_library_cdms || is_win) {\n  import("//media/cdm/library_cdm/cdm_paths.gni")')
+    replace('media/BUILD.gn',
+            '  if (enable_library_cdms) {\n    flags += [',
+            '  if (enable_library_cdms || is_win) {\n    flags += [')
     replace('media/cdm/BUILD.gn',
             'if (enable_library_cdms) {\n  static_library("cdm_paths") {',
             'if (enable_library_cdms || is_win) {\n  static_library("cdm_paths") {')
