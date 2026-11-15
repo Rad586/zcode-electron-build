@@ -50,6 +50,11 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
+    replace('chrome/test/BUILD.gn',
+            '      "//chrome/browser/ui/webui/print_preview:interactive_ui_tests",\n    ]',
+            '    ]\n\n    if (enable_print_preview) {\n'
+            '      deps += [ "//chrome/browser/ui/webui/print_preview:interactive_ui_tests" ]\n'
+            '    }')
     for anchor in (
         '      "$root_gen_dir/content/browser/devtools/devtools_resources.pak",\n',
         '      "//content/browser/devtools:devtools_resources",\n',

@@ -43,7 +43,14 @@ class TrimTests(unittest.TestCase):
                                 '  import("//tools/grit/grit_rule.gni")\n}\n'
                                 'if (enable_service_discovery) {}\n')
             files.append('chrome/browser/devtools/BUILD.gn')
+            chrome_test = root / 'chrome/test/BUILD.gn'
+            chrome_test.parent.mkdir(parents=True, exist_ok=True)
+            chrome_test.write_text('    deps += [\n'
+                                   '      "//chrome/browser/ui/webui/print_preview:interactive_ui_tests",\n'
+                                   '    ]\n')
+            files.append('chrome/test/BUILD.gn')
             trim.patch(root)
+            self.assertIn('if (enable_print_preview) {\n      deps += [', chrome_test.read_text())
             self.assertTrue(devtools.read_text().startswith(
                 'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {'))
             locales = (root / 'build/config/locales.gni').read_text()
