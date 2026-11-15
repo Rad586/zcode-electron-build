@@ -30,6 +30,7 @@ class TrimTests(unittest.TestCase):
                  'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
                  'gpu/ipc/service/gpu_init.cc',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
+                 'third_party/blink/common/origin_trials/manual_completion_origin_trial_features.cc',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
                  'media/cdm/library_cdm/cdm_paths.gni', 'media/cdm/cdm_paths.h',
@@ -123,6 +124,15 @@ class TrimTests(unittest.TestCase):
             self.assertIn('pdf_resources.pak', paks)
             self.assertIn('tracing_resources.pak', paks)
             features = (root / 'third_party/blink/renderer/platform/runtime_enabled_features.json5').read_text()
+            manual_trials = (root / 'third_party/blink/common/origin_trials/manual_completion_origin_trial_features.cc').read_text()
+            self.assertNotIn('OriginTrialFeature::kXSLT', manual_trials)
+            self.assertIn('OriginTrialFeature::kRTCEncodedFrameSetMetadata', manual_trials)
+            import re
+            for feature in trim.BLINK_FEATURES:
+                block = re.search(r'name: "' + re.escape(feature) + r'",(.*?)\n    \},', features, re.S)
+                self.assertIsNotNone(block, feature)
+                self.assertNotIn('origin_trial_', block[1], feature)
+                self.assertIn('base_feature: "none"', block[1], feature)
             for _, feature in trim.IDL_GATES.values():
                 self.assertIn('name: "' + feature + '"', features)
             before = {name: (root / name).read_bytes() for name in files}

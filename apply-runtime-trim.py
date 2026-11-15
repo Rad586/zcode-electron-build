@@ -168,6 +168,9 @@ def patch(root):
     ):
         replace('electron/build/electron_paks.gni', anchor, '')
 
+    replace('third_party/blink/common/origin_trials/manual_completion_origin_trial_features.cc',
+            '      blink::mojom::OriginTrialFeature::kXSLT,\n', '')
+
     name = 'third_party/blink/renderer/platform/runtime_enabled_features.json5'
     file = root / name
     text = file.read_text(encoding='utf-8')
