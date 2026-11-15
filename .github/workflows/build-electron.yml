@@ -58,6 +58,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
+          python "$env:GITHUB_WORKSPACE\apply-svg-lifecycle.py" D:\ec\src
+          if ($LASTEXITCODE) { throw 'SVG lifecycle patch failed' }
           if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation; stopping before disk exhaustion' }
           New-Item -ItemType Directory -Force D:\ec\src\out\Release | Out-Null
           @'
@@ -92,7 +94,10 @@ jobs:
           & D:\ec\src\out\Release\electron.exe --expose-internals "$env:GITHUB_WORKSPACE\test-asar-stat.cjs" D:\ec\asar-fs-wrapper.ts D:\ec\fixture.asar D:\ec\asar-stat.json
           if ($LASTEXITCODE) { throw 'ASAR stat checks failed' }
           Remove-Item Env:ELECTRON_RUN_AS_NODE
-          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat')} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
+          $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-profile'
+          & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-smoke.json
+          if ($LASTEXITCODE) { throw 'SVG lifecycle behavior checks failed' }
+          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle')} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
         with:
           name: electron-44.10.2-frame-cap-win32-x64
@@ -101,6 +106,7 @@ jobs:
             D:\ec\build-inputs.json
             D:\ec\native-kernel.json
             D:\ec\asar-stat.json
+            D:\ec\svg-smoke.json
           if-no-files-found: error
           retention-days: 7
       - name: Report remaining disk

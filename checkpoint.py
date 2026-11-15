@@ -12,7 +12,7 @@ import time
 
 HERE = Path(__file__).resolve().parent
 LEGACY_SOURCE = '4dbfd300a0041b5eef4faf03c6674f0192e1ba89'
-PATCH_SCRIPTS = ('apply-frame-cap.py', 'apply-asar-stat.py')
+PATCH_SCRIPTS = ('apply-frame-cap.py', 'apply-asar-stat.py', 'apply-svg-lifecycle.py')
 
 ROOT = Path('D:/ec/src')
 CACHE = Path('D:/ec/checkpoint')
