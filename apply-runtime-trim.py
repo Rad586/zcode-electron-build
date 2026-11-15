@@ -104,6 +104,14 @@ def patch(root):
     replace('components/spellcheck/spellcheck_build_features.gni',
             'enable_spellcheck = use_blink', 'enable_spellcheck = false')
 
+    replace('gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
+            '    DawnContextProvider* dawn_context_provider /*=nullptr*/) {\n',
+            '    DawnContextProvider* dawn_context_provider /*=nullptr*/) {\n'
+            '#if BUILDFLAG(SKIA_USE_DAWN)\n')
+    replace('gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
+            '  return gl::DirectCompositionSupported() &&\n',
+            '#endif\n\n  return gl::DirectCompositionSupported() &&\n')
+
     replace('content/browser/devtools/features.gni',
             'enable_devtools_frontend = !is_ios && !is_fuchsia',
             'enable_devtools_frontend = false')

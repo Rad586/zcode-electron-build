@@ -27,6 +27,7 @@ class TrimTests(unittest.TestCase):
         files = ['build/config/locales.gni', 'components/spellcheck/spellcheck_build_features.gni',
                  'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
                  'electron/build/args/all.gn',
+                 'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
@@ -63,6 +64,12 @@ class TrimTests(unittest.TestCase):
             args = (root / 'electron/build/args/all.gn').read_text()
             self.assertNotIn('root_extra_deps =', args)
             self.assertNotIn('enable_linux_installer =', args)
+            d3d = (root / 'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc').read_text()
+            swap_chain = d3d.split('bool D3DImageBackingFactory::IsSwapChainSupported(', 1)[1].split('\n}', 1)[0]
+            guarded, direct_composition = swap_chain.split('#endif', 1)
+            self.assertIn('#if BUILDFLAG(SKIA_USE_DAWN)', guarded)
+            self.assertIn('dawn_context_provider->GetD3D11Device()', guarded)
+            self.assertIn('return gl::DirectCompositionSupported() &&', direct_composition)
             self.assertIn('if (enable_spellcheck) {\n'
                           '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
                           (root / 'chrome/browser/ui/BUILD.gn').read_text())
