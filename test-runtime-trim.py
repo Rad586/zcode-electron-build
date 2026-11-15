@@ -37,6 +37,10 @@ class TrimTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
             trim.patch(root)
+            locales = (root / 'build/config/locales.gni').read_text()
+            self.assertIn('platform_pak_locales = []\n  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ]', locales)
+            self.assertLess(locales.index('if (is_win) {\n  platform_pak_locales = []'),
+                            locales.index('locales_without_pseudolocales ='))
             paks = (root / 'electron/build/electron_paks.gni').read_text()
             self.assertNotIn('devtools_resources.pak', paks)
             self.assertIn('pdf_resources.pak', paks)

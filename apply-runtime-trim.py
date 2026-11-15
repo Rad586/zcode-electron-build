@@ -36,10 +36,11 @@ def patch(root):
         edits[file] = text.replace(old, new)
 
     replace('build/config/locales.gni',
-            'if (is_apple) {\n  # Same as the locales list',
+            'locales_without_pseudolocales = platform_pak_locales - pseudolocales',
             'if (is_win) {\n'
+            '  platform_pak_locales = []\n'
             '  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ]\n'
-            '}\n\nif (is_apple) {\n  # Same as the locales list')
+            '}\n\nlocales_without_pseudolocales = platform_pak_locales - pseudolocales')
     replace('components/spellcheck/spellcheck_build_features.gni',
             'enable_spellcheck = use_blink', 'enable_spellcheck = false')
 
