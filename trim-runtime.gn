@@ -7,6 +7,7 @@ media_use_openh264 = false
 enable_vr = false
 enable_openxr = false
 use_dawn = false
+skia_use_dawn = use_dawn
 enable_vulkan = false
 enable_swiftshader = false
 enable_swiftshader_vulkan = false
