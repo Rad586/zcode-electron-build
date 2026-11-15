@@ -28,7 +28,8 @@ class TrimTests(unittest.TestCase):
                  'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
-                 'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn', 'chrome/browser/ui/BUILD.gn',
+                 'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
+                 'media/cdm/library_cdm/cdm_paths.gni', 'chrome/browser/ui/BUILD.gn',
                  'chrome/browser/policy/BUILD.gn', 'chrome/browser/BUILD.gn',
                  'chrome/browser/sync/BUILD.gn', 'chrome/browser/guest_view/BUILD.gn']
         files += ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
@@ -74,6 +75,8 @@ class TrimTests(unittest.TestCase):
                           '    deps += [ "//components/spellcheck/browser" ]', sync)
             self.assertIn('if (enable_spellcheck) {\n'
                           '    deps += [ "//chrome/browser/spellchecker" ]', sync)
+            self.assertIn('assert(enable_library_cdms || is_win)',
+                          (root / 'media/cdm/library_cdm/cdm_paths.gni').read_text())
             media = (root / 'media/BUILD.gn').read_text()
             self.assertIn('if (enable_library_cdms || is_win) {\n  import("//media/cdm/library_cdm/cdm_paths.gni")', media)
             self.assertIn('if (enable_library_cdms || is_win) {\n    flags += [', media)
