@@ -28,7 +28,8 @@ EDITS = {
          '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {',
          '  // Paint invalidation can leave the lifecycle at kPaintClean. The\n'
          '  // chrome client tracks those updates even while observers are disabled.\n'
-         '  if (view->Lifecycle().GetState() != DocumentLifecycle::kPaintClean ||\n'
+         '  if (frame->GetDocument()->Lifecycle().GetState() !=\n'
+         '          DocumentLifecycle::kPaintClean ||\n'
          '      frame->GetDocument()->NeedsLayoutTreeUpdate() ||\n'
          '      view->NeedsLayout() || chrome_client_->NeedsLifecycleUpdate() ||\n'
          '      view->GetLayoutView()->Layer()->SelfOrDescendantNeedsRepaint() ||\n'
