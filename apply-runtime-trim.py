@@ -47,6 +47,9 @@ def patch(root):
     replace('content/browser/devtools/features.gni',
             'enable_devtools_frontend = !is_ios && !is_fuchsia',
             'enable_devtools_frontend = false')
+    replace('chrome/browser/devtools/BUILD.gn',
+            'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
+            'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
     for anchor in (
         '      "$root_gen_dir/content/browser/devtools/devtools_resources.pak",\n',
         '      "//content/browser/devtools:devtools_resources",\n',

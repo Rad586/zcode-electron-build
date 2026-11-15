@@ -36,7 +36,16 @@ class TrimTests(unittest.TestCase):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)
+            devtools = root / 'chrome/browser/devtools/BUILD.gn'
+            devtools.parent.mkdir(parents=True, exist_ok=True)
+            devtools.write_text('if (enable_devtools_frontend) {\n'
+                                '  import("//chrome/common/features.gni")\n'
+                                '  import("//tools/grit/grit_rule.gni")\n}\n'
+                                'if (enable_service_discovery) {}\n')
+            files.append('chrome/browser/devtools/BUILD.gn')
             trim.patch(root)
+            self.assertTrue(devtools.read_text().startswith(
+                'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {'))
             locales = (root / 'build/config/locales.gni').read_text()
             self.assertIn('platform_pak_locales = []\n  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ] + pseudolocales', locales)
             self.assertLess(locales.index('if (is_win) {\n  platform_pak_locales = []'),
