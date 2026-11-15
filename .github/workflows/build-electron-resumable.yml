@@ -80,8 +80,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          git -C D:\ec\src\electron pack-refs --all
-          if ($LASTEXITCODE) { throw 'Electron Git reference preparation failed' }
+          python "$env:GITHUB_WORKSPACE\prepare-version.py" D:\ec\src\electron 44.10.2
+          if ($LASTEXITCODE) { throw 'Electron release version preparation failed' }
           python "$env:GITHUB_WORKSPACE\apply-frame-cap.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
@@ -102,11 +102,9 @@ jobs:
           "@ | Set-Content -Encoding utf8NoBOM D:\ec\src\out\Release\args.gn
           python "$env:GITHUB_WORKSPACE\checkpoint.py" restore
           if ($LASTEXITCODE) { throw 'Build checkpoint restore failed' }
-          if (-not (Test-Path D:\ec\src\out\Release\.ninja_log)) {
-            Set-Location D:\ec\src
-            & D:\depot_tools\gn.bat gen out/Release
-            if ($LASTEXITCODE) { throw 'GN generation failed' }
-          }
+          Set-Location D:\ec\src
+          & D:\depot_tools\gn.bat gen out/Release
+          if ($LASTEXITCODE) { throw 'GN generation failed' }
       - name: Compile Windows x64 runtime
         id: compile
         shell: pwsh
