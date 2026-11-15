@@ -50,6 +50,23 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
+    replace('chrome/browser/ui/BUILD.gn',
+            'import("//components/compose/features.gni")',
+            'import("//components/compose/features.gni")\n'
+            'import("//components/spellcheck/spellcheck_build_features.gni")')
+    replace('chrome/browser/ui/BUILD.gn',
+            '      "//chrome/browser/spellchecker",\n', '')
+    replace('chrome/browser/ui/BUILD.gn',
+            '      "//components/spellcheck/browser",\n', '')
+    replace('chrome/browser/ui/BUILD.gn',
+            '      "//components/undo",\n    ]\n    if (is_mac) {\n'
+            '      deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]',
+            '      "//components/undo",\n    ]\n'
+            '    if (enable_spellcheck) {\n'
+            '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]\n'
+            '    }\n'
+            '    if (is_mac) {\n'
+            '      deps += [ "//chrome/browser:global_keyboard_shortcuts_mac" ]')
     replace('printing/BUILD.gn',
             '  assert(enable_printing)',
             '  assert(enable_printing || enable_pdf)')
