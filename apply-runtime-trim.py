@@ -50,6 +50,9 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
+    replace('printing/BUILD.gn',
+            '  assert(enable_printing)',
+            '  assert(enable_printing || enable_pdf)')
     replace('chrome/test/BUILD.gn',
             '      "//chrome/browser/ui/webui/print_preview:interactive_ui_tests",\n    ]',
             '    ]\n\n    if (enable_print_preview) {\n'
