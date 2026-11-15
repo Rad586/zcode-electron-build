@@ -91,6 +91,10 @@ def patch(root):
     edits[file] = text + '\nroot = "//electron:electron_dist_zip"\n' + \
         'root_patterns = [ "//electron:electron_dist_zip" ]\n'
 
+    replace('electron/build/args/all.gn',
+            'root_extra_deps = [ "//electron" ]\n', '')
+    replace('electron/build/args/all.gn', 'enable_linux_installer = false\n', '')
+
     replace('build/config/locales.gni',
             'locales_without_pseudolocales = platform_pak_locales - pseudolocales',
             'if (is_win) {\n'

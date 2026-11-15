@@ -26,6 +26,7 @@ class TrimTests(unittest.TestCase):
     def test_pinned_patch_is_atomic_on_anchor_failure(self):
         files = ['build/config/locales.gni', 'components/spellcheck/spellcheck_build_features.gni',
                  'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
+                 'electron/build/args/all.gn',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
@@ -59,6 +60,9 @@ class TrimTests(unittest.TestCase):
             dotfile = (root / '.gn').read_text()
             self.assertIn('root = "//electron:electron_dist_zip"\n', dotfile)
             self.assertIn('root_patterns = [ "//electron:electron_dist_zip" ]\n', dotfile)
+            args = (root / 'electron/build/args/all.gn').read_text()
+            self.assertNotIn('root_extra_deps =', args)
+            self.assertNotIn('enable_linux_installer =', args)
             self.assertIn('if (enable_spellcheck) {\n'
                           '      deps += [ "//chrome/browser/spellchecker", "//components/spellcheck/browser" ]',
                           (root / 'chrome/browser/ui/BUILD.gn').read_text())
@@ -100,7 +104,7 @@ class TrimTests(unittest.TestCase):
             self.assertNotIn('devtools_resources.pak', paks)
             self.assertIn('pdf_resources.pak', paks)
             self.assertIn('tracing_resources.pak', paks)
-            features = (root / files[4]).read_text()
+            features = (root / 'third_party/blink/renderer/platform/runtime_enabled_features.json5').read_text()
             for _, feature in trim.IDL_GATES.values():
                 self.assertIn('name: "' + feature + '"', features)
             before = {name: (root / name).read_bytes() for name in files}
