@@ -39,7 +39,7 @@ def patch(root):
             'locales_without_pseudolocales = platform_pak_locales - pseudolocales',
             'if (is_win) {\n'
             '  platform_pak_locales = []\n'
-            '  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ]\n'
+            '  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ] + pseudolocales\n'
             '}\n\nlocales_without_pseudolocales = platform_pak_locales - pseudolocales')
     replace('components/spellcheck/spellcheck_build_features.gni',
             'enable_spellcheck = use_blink', 'enable_spellcheck = false')
