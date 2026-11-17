@@ -25,7 +25,8 @@ icu = load('trim-icu')
 class TrimTests(unittest.TestCase):
     def test_pinned_patch_is_atomic_on_anchor_failure(self):
         files = ['build/config/locales.gni', 'components/spellcheck/spellcheck_build_features.gni',
-                 'content/browser/devtools/features.gni', 'electron/build/electron_paks.gni',
+                 'content/browser/devtools/features.gni', 'content/child/runtime_features.cc',
+                 'electron/build/electron_paks.gni',
                  'electron/build/args/all.gn',
                  'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
                  'gpu/ipc/service/gpu_init.cc',
@@ -127,6 +128,16 @@ class TrimTests(unittest.TestCase):
             manual_trials = (root / 'third_party/blink/common/origin_trials/manual_completion_origin_trial_features.cc').read_text()
             self.assertNotIn('OriginTrialFeature::kXSLT', manual_trials)
             self.assertIn('OriginTrialFeature::kRTCEncodedFrameSetMetadata', manual_trials)
+            runtime_features = (root / 'content/child/runtime_features.cc').read_text()
+            self.assertNotIn('wf::EnableXSLT', runtime_features)
+            self.assertNotIn('blink::features::kXSLT', runtime_features)
+            self.assertIn('{wf::EnableWebXRSpecParity,\n'
+                          '           raw_ref(device::features::kWebXRIncubations)},\n'
+                          '#endif\n'
+                          '      };\n'
+                          '  for (const auto& mapping : blinkFeatureToBaseFeatureMapping)',
+                          runtime_features)
+            self.assertIn('WebRuntimeFeatures::EnableXSLT(value == "true");', runtime_features)
             import re
             for feature in trim.BLINK_FEATURES:
                 block = re.search(r'name: "' + re.escape(feature) + r'",(.*?)\n    \},', features, re.S)
