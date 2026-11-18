@@ -6,6 +6,7 @@ const {app, BrowserWindow, Notification} = require('electron');
 
 assert(process.env.ZCODE_TRIM_PROFILE, 'ZCODE_TRIM_PROFILE is required');
 app.setPath('userData', path.resolve(process.env.ZCODE_TRIM_PROFILE));
+app.commandLine.appendSwitch('force_physical_gpu_for_testing');
 const watchdog = setTimeout(() => {console.error('Runtime trim suite timed out'); app.exit(1);}, 90000);
 const fixtures = process.env.ZCODE_TRIM_FIXTURES;
 assert(fixtures, 'ZCODE_TRIM_FIXTURES is required');

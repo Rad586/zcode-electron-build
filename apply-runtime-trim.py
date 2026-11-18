@@ -358,6 +358,14 @@ def patch(root):
     for relative, (anchor, feature) in IDL_GATES.items():
         replace('third_party/blink/renderer/modules/' + relative, anchor,
                 'RuntimeEnabled=' + feature + ',\n    ' + anchor)
+    replace('third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.idl',
+            '    Exposed=Window,\n'
+            '    LegacyWindowAlias=webkitRTCPeerConnection,\n'
+            '    LegacyWindowAlias_Measure\n',
+            '    Exposed=Window\n')
+    replace('third_party/blink/renderer/core/exported/web_view_impl.cc',
+            '  RuntimeEnabledFeatures::SetPaymentRequestEnabled(\n'
+            '      prefs.payment_request_enabled);\n\n', '')
 
     replace('electron/BUILD.gn',
             'copy("chromium_licenses") {\n'

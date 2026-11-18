@@ -52,6 +52,7 @@ class TrimTests(unittest.TestCase):
                  'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
                  'gpu/ipc/service/gpu_init.cc',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
+                 'third_party/blink/renderer/core/exported/web_view_impl.cc',
                  'third_party/blink/common/origin_trials/manual_completion_origin_trial_features.cc',
                  'electron/shell/app/electron_main_delegate.cc', 'electron/BUILD.gn',
                  'printing/BUILD.gn', 'media/BUILD.gn', 'media/cdm/BUILD.gn',
@@ -227,8 +228,14 @@ class TrimTests(unittest.TestCase):
                 self.assertIsNotNone(block, feature)
                 self.assertNotIn('origin_trial_', block[1], feature)
                 self.assertIn('base_feature: "none"', block[1], feature)
-            for _, feature in trim.IDL_GATES.values():
+            for relative, (_, feature) in trim.IDL_GATES.items():
                 self.assertIn('name: "' + feature + '"', features)
+                self.assertIn('RuntimeEnabled=' + feature,
+                              (root / 'third_party/blink/renderer/modules' / relative).read_text())
+            peer = (root / 'third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.idl').read_text()
+            self.assertNotIn('LegacyWindowAlias', peer)
+            view = (root / 'third_party/blink/renderer/core/exported/web_view_impl.cc').read_text()
+            self.assertNotIn('SetPaymentRequestEnabled', view)
             before = {name: (root / name).read_bytes() for name in files}
             with self.assertRaises(RuntimeError):
                 trim.patch(root)
