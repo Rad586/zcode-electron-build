@@ -106,8 +106,14 @@ class TrimTests(unittest.TestCase):
                           (root / 'media/cdm/BUILD.gn').read_text())
             self.assertIn('#if !BUILDFLAG(ENABLE_LIBRARY_CDMS) && !BUILDFLAG(IS_WIN)',
                           (root / 'media/cdm/cdm_paths.h').read_text())
-            self.assertIn('assert(enable_printing || enable_pdf)',
-                          (root / 'printing/BUILD.gn').read_text())
+            printing = (root / 'printing/BUILD.gn').read_text()
+            self.assertIn('assert(enable_printing || enable_pdf)', printing)
+            self.assertIn('if (!enable_basic_print_dialog && !is_win) {\n'
+                          '    sources += [\n'
+                          '      "printing_context_no_system_dialog.cc",', printing)
+            windows = printing.split('component("printing") {', 1)[1].split('  if (is_win) {', 1)[1].split('\n  }', 1)[0]
+            self.assertIn('"printing_context_system_dialog_win.cc",', windows)
+            self.assertIn('"printing_context_win.cc",', windows)
             self.assertIn('if (enable_print_preview) {\n      deps += [', chrome_test.read_text())
             guest = (root / 'chrome/browser/guest_view/BUILD.gn').read_text()
             self.assertIn('if (enable_print_preview) {\n'

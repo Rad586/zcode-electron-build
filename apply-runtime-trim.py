@@ -155,6 +155,9 @@ def patch(root):
     replace('printing/BUILD.gn',
             '  assert(enable_printing)',
             '  assert(enable_printing || enable_pdf)')
+    replace('printing/BUILD.gn',
+            '  if (!enable_basic_print_dialog) {',
+            '  if (!enable_basic_print_dialog && !is_win) {')
     for anchor in (
         '      "$root_gen_dir/content/browser/devtools/devtools_resources.pak",\n',
         '      "//content/browser/devtools:devtools_resources",\n',
