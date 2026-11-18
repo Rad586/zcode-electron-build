@@ -1,6 +1,7 @@
 """Exercise the pinned trim anchors and ICU resource package independently."""
 import importlib.util
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -22,6 +23,19 @@ trim = load('apply-runtime-trim')
 icu = load('trim-icu')
 
 
+def without_dawn(text):
+    guards = []
+    for line in text.splitlines():
+        if re.match(r'#if(?:def|ndef)?\b', line):
+            guards.append(line == '#if BUILDFLAG(SKIA_USE_DAWN)')
+        elif line.startswith('#endif'):
+            guards.pop()
+        elif not any(guards):
+            yield line
+    if guards:
+        raise AssertionError('Unbalanced preprocessor guards')
+
+
 class TrimTests(unittest.TestCase):
     def test_pinned_patch_is_atomic_on_anchor_failure(self):
         files = ['build/config/locales.gni', 'components/spellcheck/spellcheck_build_features.gni',
@@ -38,7 +52,9 @@ class TrimTests(unittest.TestCase):
                  'chrome/browser/ui/BUILD.gn',
                  'chrome/browser/policy/BUILD.gn', 'chrome/browser/BUILD.gn',
                  'chrome/browser/sync/BUILD.gn', 'chrome/browser/guest_view/BUILD.gn']
-        files += ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
+        d3d_files = ['gpu/command_buffer/service/shared_image/d3d_image_' + name
+                     for name in ('backing.cc', 'backing.h', 'representation.cc', 'representation.h')]
+        files += d3d_files + ['third_party/blink/renderer/modules/' + name for name in trim.IDL_GATES]
         with tempfile.TemporaryDirectory(dir=HERE) as work:
             root = Path(work)
             for name in files:
@@ -144,7 +160,21 @@ class TrimTests(unittest.TestCase):
                           '  for (const auto& mapping : blinkFeatureToBaseFeatureMapping)',
                           runtime_features)
             self.assertIn('WebRuntimeFeatures::EnableXSLT(value == "true");', runtime_features)
-            import re
+            d3d_without_dawn = '\n'.join(line for name in d3d_files
+                                         for line in without_dawn((root / name).read_text()))
+            d3d_without_dawn = re.sub(r'//[^\n]*', '', d3d_without_dawn)
+            self.assertNotRegex(d3d_without_dawn,
+                                r'dawn::|DawnContextProvider|DawnSharedTextureCache|'
+                                r'PersistentGraphiteDawnAccess|DawnD3D\w+Representation|'
+                                r'GraphiteDawnImageRepresentation|FlushGraphiteCommandsIfNeeded|'
+                                r'NotifyGraphiteAboutInitializedStatus|\bProduceDawn(?:Buffer)?\b')
+            for name in ('BeginAccessD3D11', 'BeginAccessD3D12', 'EndAccessD3D',
+                         'GetPendingWaitFences', 'EnsureD3D12Resource', 'PresentSwapChain',
+                         'ProduceOverlay', 'ProduceVideo', 'CopyToStagingTexture'):
+                self.assertIn('D3DImageBacking::' + name + '(', d3d_without_dawn)
+            self.assertIn('auto unwrapped_d3d12_resource = EnsureD3D12Resource();', d3d_without_dawn)
+            self.assertIn('wait_fences.push_back(std::move(dcomp_texture_available_fence_));',
+                          d3d_without_dawn)
             for feature in trim.BLINK_FEATURES:
                 block = re.search(r'name: "' + re.escape(feature) + r'",(.*?)\n    \},', features, re.S)
                 self.assertIsNotNone(block, feature)

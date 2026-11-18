@@ -84,6 +84,14 @@ def patch(root):
             raise RuntimeError(f'{name}: expected one patch anchor: {old[:70]}')
         edits[file] = text.replace(old, new)
 
+    def guard_dawn(name, first, until):
+        file = root / name
+        text = edits.get(file, file.read_text(encoding='utf-8'))
+        start = text.index(first)
+        end = text.index(until, start + len(first))
+        replace(name, text[start:end], '#if BUILDFLAG(SKIA_USE_DAWN)\n' +
+                text[start:end].rstrip('\n') + '\n#endif  // BUILDFLAG(SKIA_USE_DAWN)\n\n')
+
     file = root / '.gn'
     text = file.read_text(encoding='utf-8')
     if re.search(r'(?m)^\s*(?:root|root_patterns)\s*=', text):
@@ -129,6 +137,77 @@ def patch(root):
     replace('gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
             '  return gl::DirectCompositionSupported() &&\n',
             '#endif\n\n  return gl::DirectCompositionSupported() &&\n')
+
+    d3d = 'gpu/command_buffer/service/shared_image/d3d_image_'
+    backing = d3d + 'backing.cc'
+    header = d3d + 'backing.h'
+    representation = d3d + 'representation.cc'
+    representation_header = d3d + 'representation.h'
+    replace(backing, '#include "gpu/command_buffer/service/dawn_context_provider.h"\n'
+            '#include "gpu/command_buffer/service/dxgi_shared_handle_manager.h"',
+            '#include "gpu/command_buffer/service/dxgi_shared_handle_manager.h"')
+    replace(backing, '#include "gpu/command_buffer/service/shared_image/skia_graphite_dawn_image_representation.h"\n', '')
+    for first, until in (
+        ('// clang-format off\n#include <dawn/native/D3D11Backend.h>', '#include "base/functional/bind.h"'),
+        ('Microsoft::WRL::ComPtr<ID3D11Device> GetD3D11Device(',
+         'Microsoft::WRL::ComPtr<IDCompositionTexture> CreateDCompTexture('),
+        ('// PersistentGraphiteDawnAccess. This is ref counted',
+         '// static\nscoped_refptr<D3DImageBacking::GLTextureHolder>'),
+        ('std::unique_ptr<DawnImageRepresentation> D3DImageBacking::ProduceDawn(',
+         'Microsoft::WRL::ComPtr<ID3D12Resource> D3DImageBacking::EnsureD3D12Resource()'),
+        ('wgpu::Texture D3DImageBacking::GetOrCreateDawnTexture(',
+         'void D3DImageBacking::UpdateExternalFence('),
+        ('int D3DImageBacking::TrackBeginAccessToWGPUTexture(', 'bool D3DImageBacking::BeginAccessD3D('),
+        ('std::unique_ptr<DawnBufferRepresentation> D3DImageBacking::ProduceDawnBuffer(',
+         'bool D3DImageBacking::ValidateBeginAccess('),
+        ('void D3DImageBacking::FlushGraphiteCommandsIfNeeded()',
+         'ID3D12CommandQueue* D3DImageBacking::GetOrCreateCommandQueueFor11On12()'),
+        ('  // Flush any previously deferred Graphite commands before uploading',
+         '  if (use_update_subresource1_'),
+        ('  // Flush any previously deferred Graphite commands to ensure the readback',
+         '  ID3D11Texture2D* staging_texture'),
+        ('  if (persistent_graphite_dawn_access_) {\n'
+         '    if (persistent_graphite_dawn_access_->IsGraphiteD3D11Device(d3d11_device))',
+         '  // If the texture is currently unwrapped for D3D12,'),
+        ('  if (in_write_access_) {\n    NotifyGraphiteAboutInitializedStatus();',
+         '  EndAccessCommon(signaled_fence);'),
+        ('  // Flush any deferred Graphite submits before presentation.', '  TRACE_EVENT1('),
+    ):
+        guard_dawn(backing, first, until)
+    for line in (
+        '    d3d12_shared_texture_memory_is_current_ = false;',
+        '  FlushGraphiteCommandsIfNeeded();\n\n  if (!ValidateBeginAccess(write_access)) {',
+    ):
+        first, *rest = line.split('\n', 1)
+        replace(backing, line + '\n', '#if BUILDFLAG(SKIA_USE_DAWN)\n' + first +
+                '\n#endif  // BUILDFLAG(SKIA_USE_DAWN)\n' + (rest[0] + '\n' if rest else ''))
+    replace(backing, ',\n      dawn_shared_texture_cache_(\n'
+            '          base::MakeRefCounted<DawnSharedTextureCache>()) {\n', ' {\n')
+    replace(backing, ',\n      dawn_shared_texture_cache_(\n'
+            '          base::MakeRefCounted<DawnSharedTextureCache>()) {}\n', ' {}\n')
+    replace(header, 'scoped_refptr<DawnSharedTextureCache> dawn_shared_texture_cache_\n'
+            '      GUARDED_BY(lock_);',
+            'scoped_refptr<DawnSharedTextureCache> dawn_shared_texture_cache_\n'
+            '      GUARDED_BY(lock_) = base::MakeRefCounted<DawnSharedTextureCache>();')
+    for first, until in (
+        ('  std::unique_ptr<DawnImageRepresentation> ProduceDawn(', '  void UpdateExternalFence('),
+        ('  wgpu::Texture BeginAccessDawn(', '  std::unique_ptr<WebNNTensorRepresentation> ProduceWebNNTensor('),
+        ('  bool SupportsDeferredGraphiteSubmit() const;', '  // Holds a gles2::TexturePassthrough'),
+        ('  void CheckForDawnDeviceLoss(', '  // Get a list of fences'),
+        ('  // Uses either DXGISharedHandleState or internal', '  // Unwraps the D3D11 texture'),
+        ('  // DawnSharedTextureCache that keeps', '  std::optional<base::WaitableEventWatcher>'),
+        ('  // Persistent Graphite\'s Dawn\'s access.', '  base::WeakPtrFactory<D3DImageBacking>'),
+    ):
+        guard_dawn(header, first, until)
+    guard_dawn(representation, 'DawnD3DImageRepresentation::DawnD3DImageRepresentation(',
+               'WebNND3DTensorRepresentation::WebNND3DTensorRepresentation(')
+    guard_dawn(representation, '// D3DSkiaGraphiteDawnImageRepresentation\n', '}  // namespace gpu')
+    guard_dawn(representation_header,
+               '#include "gpu/command_buffer/service/shared_image/skia_graphite_dawn_image_representation.h"\n',
+               '#include "gpu/command_buffer/service/texture_manager.h"')
+    guard_dawn(representation_header, '// Representation of a D3DImageBacking as a Dawn Texture',
+               '// Representation of a D3DImageBacking as a tensor.')
+    guard_dawn(representation_header, 'class D3DSkiaGraphiteDawnImageRepresentation', '}  // namespace gpu')
 
     replace('content/browser/devtools/features.gni',
             'enable_devtools_frontend = !is_ios && !is_fuchsia',
