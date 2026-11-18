@@ -31,7 +31,7 @@ DEPENDENCY_LIST = re.compile(
 GN_LABEL = re.compile(r'#[^\n]*|"(?:\\.|[^"\\])*"[ \t]*,?')
 DEPENDENCY_FEATURES = (
     ('enable_spellcheck', SPELLCHECK_IMPORT, re.compile(
-        r'"//(?:chrome/browser/spellchecker|components/spellcheck/browser)(?::[^"\n]+)?"[ \t]*,?')),
+        r'"//(?:chrome/browser/spellchecker|components/spellcheck/(?:browser|renderer))(?::[^"\n]+)?"[ \t]*,?')),
     ('enable_printing', 'import("//printing/buildflags/buildflags.gni")', re.compile(
         r'"//chrome/browser/printing(?::[^"\n]+)?"[ \t]*,?')),
     ('enable_print_preview', 'import("//printing/buildflags/buildflags.gni")', re.compile(

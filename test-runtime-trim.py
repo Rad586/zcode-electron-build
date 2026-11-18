@@ -41,7 +41,7 @@ class TrimTests(unittest.TestCase):
         files = ['build/config/locales.gni', 'components/spellcheck/spellcheck_build_features.gni',
                  'content/browser/devtools/features.gni', 'content/child/runtime_features.cc',
                  'electron/build/electron_paks.gni',
-                 'electron/build/args/all.gn',
+                 'electron/build/args/all.gn', 'electron/chromium_src/BUILD.gn',
                  'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
                  'gpu/ipc/service/gpu_init.cc',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
@@ -113,6 +113,12 @@ class TrimTests(unittest.TestCase):
                           '    deps += [ "//components/spellcheck/browser" ]', sync)
             self.assertIn('if (enable_spellcheck) {\n'
                           '    deps += [ "//chrome/browser/spellchecker" ]', sync)
+            electron_spellcheck = (root / 'electron/chromium_src/BUILD.gn').read_text().split(
+                'source_set("chrome_spellchecker") {', 1)[1]
+            self.assertIn('if (enable_spellcheck) {\n'
+                          '    public_deps += [ "//components/spellcheck/browser", '
+                          '"//components/spellcheck/renderer" ]', electron_spellcheck)
+            self.assertIn('    "//components/spellcheck/common",', electron_spellcheck)
             self.assertIn('assert(enable_library_cdms || is_win)',
                           (root / 'media/cdm/library_cdm/cdm_paths.gni').read_text())
             media = (root / 'media/BUILD.gn').read_text()
