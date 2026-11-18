@@ -23,13 +23,15 @@ trim = load('apply-runtime-trim')
 icu = load('trim-icu')
 
 
-def without_dawn(text):
+def without_feature(text, flag):
     guards = []
     for line in text.splitlines():
         if re.match(r'#if(?:def|ndef)?\b', line):
-            guards.append(line == '#if BUILDFLAG(SKIA_USE_DAWN)')
+            guards.append(line == '#if BUILDFLAG(' + flag + ')')
         elif line.startswith('#endif'):
             guards.pop()
+        elif line.startswith('#else') and guards and guards[-1]:
+            guards[-1] = False
         elif not any(guards):
             yield line
     if guards:
@@ -42,6 +44,11 @@ class TrimTests(unittest.TestCase):
                  'content/browser/devtools/features.gni', 'content/child/runtime_features.cc',
                  'electron/build/electron_paks.gni',
                  'electron/build/args/all.gn', 'electron/chromium_src/BUILD.gn',
+                 'electron/buildflags/BUILD.gn',
+                 'electron/shell/renderer/api/electron_api_web_frame.cc',
+                 'electron/shell/browser/ui/inspectable_web_contents.cc',
+                 'electron/shell/browser/ui/devtools_ui_bundle_data_source.cc',
+                 'printing/common/metafile_utils.cc',
                  'gpu/command_buffer/service/shared_image/d3d_image_backing_factory.cc',
                  'gpu/ipc/service/gpu_init.cc',
                  'third_party/blink/renderer/platform/runtime_enabled_features.json5',
@@ -119,6 +126,38 @@ class TrimTests(unittest.TestCase):
                           '    public_deps += [ "//components/spellcheck/browser", '
                           '"//components/spellcheck/renderer" ]', electron_spellcheck)
             self.assertIn('    "//components/spellcheck/common",', electron_spellcheck)
+            electron_build = (root / 'electron/BUILD.gn').read_text()
+            self.assertIn('if (!enable_builtin_spellchecker) {\n    sources -= [\n'
+                          '      "shell/renderer/api/electron_api_spell_check_client.cc",', electron_build)
+            web_frame = '\n'.join(without_feature(
+                (root / 'electron/shell/renderer/api/electron_api_web_frame.cc').read_text(),
+                'ENABLE_BUILTIN_SPELLCHECKER'))
+            self.assertNotRegex(web_frame, r'SpellCheckClient|FrameSetSpellChecker|'
+                                r'SpellCheckerHolder|setSpellCheckProvider|components/spellcheck/renderer/')
+            self.assertIn('.SetMethod("insertText",', web_frame)
+            buildflags = (root / 'electron/buildflags/BUILD.gn').read_text()
+            self.assertIn('"ENABLE_DEVTOOLS_FRONTEND=$enable_devtools_frontend",', buildflags)
+            inspectable = '\n'.join(without_feature(
+                (root / 'electron/shell/browser/ui/inspectable_web_contents.cc').read_text(),
+                'ENABLE_DEVTOOLS_FRONTEND'))
+            self.assertNotIn('DevToolsFrontendHost::Create(', inspectable)
+            self.assertNotIn('GetDevToolsURL(', inspectable)
+            self.assertNotIn('DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(', inspectable)
+            self.assertIn('agent_host_->AttachClient(this);', inspectable)
+            self.assertIn('void InspectableWebContents::DispatchProtocolMessage(', inspectable)
+            bundle = '\n'.join(without_feature(
+                (root / 'electron/shell/browser/ui/devtools_ui_bundle_data_source.cc').read_text(),
+                'ENABLE_DEVTOOLS_FRONTEND'))
+            self.assertNotIn('DevToolsFrontendHost::GetFrontendResourceBytes(', bundle)
+            self.assertNotIn('PathWithoutParams(', bundle)
+            self.assertIn('std::move(callback).Run(bytes);', bundle)
+            metafile = '\n'.join(without_feature(
+                (root / 'printing/common/metafile_utils.cc').read_text(), 'ENABLE_PRINTING'))
+            self.assertNotIn('SkPDF::', metafile)
+            self.assertIn('  return nullptr;', metafile)
+            for name in ('GetEmptyPicture', 'SerializeOopPicture', 'DeserializeOopPicture',
+                         'SerializeRasterImage', 'DeserializeRasterImage', 'SerializationProcs'):
+                self.assertIn(name + '(', metafile)
             self.assertIn('assert(enable_library_cdms || is_win)',
                           (root / 'media/cdm/library_cdm/cdm_paths.gni').read_text())
             media = (root / 'media/BUILD.gn').read_text()
@@ -169,7 +208,7 @@ class TrimTests(unittest.TestCase):
                           runtime_features)
             self.assertIn('WebRuntimeFeatures::EnableXSLT(value == "true");', runtime_features)
             d3d_without_dawn = '\n'.join(line for name in d3d_files
-                                         for line in without_dawn((root / name).read_text()))
+                                         for line in without_feature((root / name).read_text(), 'SKIA_USE_DAWN'))
             d3d_without_dawn = re.sub(r'//[^\n]*', '', d3d_without_dawn)
             self.assertNotRegex(d3d_without_dawn,
                                 r'dawn::|DawnContextProvider|DawnSharedTextureCache|'

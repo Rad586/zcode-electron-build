@@ -84,13 +84,16 @@ def patch(root):
             raise RuntimeError(f'{name}: expected one patch anchor: {old[:70]}')
         edits[file] = text.replace(old, new)
 
-    def guard_dawn(name, first, until):
+    def guard_region(name, first, until, flag):
         file = root / name
         text = edits.get(file, file.read_text(encoding='utf-8'))
         start = text.index(first)
         end = text.index(until, start + len(first))
-        replace(name, text[start:end], '#if BUILDFLAG(SKIA_USE_DAWN)\n' +
-                text[start:end].rstrip('\n') + '\n#endif  // BUILDFLAG(SKIA_USE_DAWN)\n\n')
+        replace(name, text[start:end], '#if BUILDFLAG(' + flag + ')\n' +
+                text[start:end].rstrip('\n') + '\n#endif  // BUILDFLAG(' + flag + ')\n\n')
+
+    def guard_dawn(name, first, until):
+        guard_region(name, first, until, 'SKIA_USE_DAWN')
 
     file = root / '.gn'
     text = file.read_text(encoding='utf-8')
@@ -111,6 +114,29 @@ def patch(root):
             '}\n\nif (!enable_pseudolocales) {')
     replace('components/spellcheck/spellcheck_build_features.gni',
             'enable_spellcheck = use_blink', 'enable_spellcheck = false')
+    replace('electron/BUILD.gn',
+            '  sources = filenames.lib_sources\n',
+            '  sources = filenames.lib_sources\n'
+            '  if (!enable_builtin_spellchecker) {\n'
+            '    sources -= [\n'
+            '      "shell/renderer/api/electron_api_spell_check_client.cc",\n'
+            '      "shell/renderer/api/electron_api_spell_check_client.h",\n'
+            '    ]\n'
+            '  }\n')
+    web_frame = 'electron/shell/renderer/api/electron_api_web_frame.cc'
+    replace(web_frame, '#include "components/spellcheck/renderer/spellcheck.h"\n'
+            '#include "content/public/renderer/render_frame.h"',
+            '#include "electron/buildflags/buildflags.h"\n'
+            '#include "content/public/renderer/render_frame.h"')
+    guard_region(web_frame, '#include "shell/renderer/api/electron_api_spell_check_client.h"',
+                 '#include "shell/renderer/renderer_client_base.h"', 'ENABLE_BUILTIN_SPELLCHECKER')
+    for first, until in (
+        ('class SpellCheckerHolder;', 'class ScriptExecutionCallback'),
+        ('class FrameSetSpellChecker :', 'class WebFrameRenderer final'),
+        ('        .SetMethod("setSpellCheckProvider",', '        // Frame navigators'),
+        ('  void SetSpellCheckProvider(', '  void InsertText('),
+    ):
+        guard_region(web_frame, first, until, 'ENABLE_BUILTIN_SPELLCHECKER')
 
     replace('gpu/ipc/service/gpu_init.cc',
             '    gl::SolidColorPoolFactory solid_color_factory;\n'
@@ -215,6 +241,44 @@ def patch(root):
     replace('chrome/browser/devtools/BUILD.gn',
             'if (enable_devtools_frontend) {\n  import("//chrome/common/features.gni")',
             'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {')
+    replace('electron/buildflags/BUILD.gn',
+            'import("//build/buildflag_header.gni")',
+            'import("//build/buildflag_header.gni")\n'
+            'import("//content/browser/devtools/features.gni")')
+    replace('electron/buildflags/BUILD.gn',
+            '    "ENABLE_PDF_VIEWER=$enable_pdf_viewer",',
+            '    "ENABLE_PDF_VIEWER=$enable_pdf_viewer",\n'
+            '    "ENABLE_DEVTOOLS_FRONTEND=$enable_devtools_frontend",')
+    inspectable = 'electron/shell/browser/ui/inspectable_web_contents.cc'
+    bundle = 'electron/shell/browser/ui/devtools_ui_bundle_data_source.cc'
+    for name, anchor in ((inspectable, '#include <algorithm>'),
+                         (bundle, '#include <string>')):
+        replace(name, anchor, '#include "electron/buildflags/buildflags.h"\n\n' + anchor)
+    for first, until in (
+        ('constexpr std::string_view kChromeUIDevToolsURL',
+         'constexpr std::string_view kDevToolsBoundsPref'),
+        ('GURL GetRemoteBaseURL()', 'constexpr base::TimeDelta kInitialBackoffDelay'),
+        ('  if (embedder_message_dispatcher_) {\n    if (managed_devtools_web_contents_)\n'
+         '      view_->ShowDevTools(activate);', '\n}\n'),
+        ('  if (new_host->GetParent())', '\n}\n'),
+        ('  if (navigation_handle->IsInPrimaryMainFrame()) {\n'
+         '    if (navigation_handle->GetRenderFrameHost() ==', '\n}\n'),
+    ):
+        guard_region(inspectable, first, until, 'ENABLE_DEVTOOLS_FRONTEND')
+    guard_region(bundle, 'std::string PathWithoutParams(',
+                 'scoped_refptr<base::RefCountedMemory> CreateNotFoundResponse()',
+                 'ENABLE_DEVTOOLS_FRONTEND')
+    replace(bundle,
+            '  std::string filename = PathWithoutParams(path);\n'
+            '  scoped_refptr<base::RefCountedMemory> bytes =\n'
+            '      content::DevToolsFrontendHost::GetFrontendResourceBytes(filename);',
+            '  scoped_refptr<base::RefCountedMemory> bytes;\n'
+            '#if BUILDFLAG(ENABLE_DEVTOOLS_FRONTEND)\n'
+            '  std::string filename = PathWithoutParams(path);\n'
+            '  bytes = content::DevToolsFrontendHost::GetFrontendResourceBytes(filename);')
+    replace(bundle, '  std::move(callback).Run(bytes);',
+            '#endif  // BUILDFLAG(ENABLE_DEVTOOLS_FRONTEND)\n'
+            '  std::move(callback).Run(bytes);')
     replace('media/cdm/cdm_paths.h',
             '#if !BUILDFLAG(ENABLE_LIBRARY_CDMS)\n'
             '#error This file only applies to builds that enable_library_cdms.\n',
@@ -237,6 +301,19 @@ def patch(root):
     replace('printing/BUILD.gn',
             '  if (!enable_basic_print_dialog) {',
             '  if (!enable_basic_print_dialog && !is_win) {')
+    metafile = 'printing/common/metafile_utils.cc'
+    for first, until in (
+        ('SkString GetHeadingStructureType(', 'sk_sp<SkPicture> GetEmptyPicture()'),
+        ('void AppendCheckedStateIfTrue(', 'sk_sp<const SkData> GetImageData('),
+    ):
+        guard_region(metafile, first, until, 'ENABLE_PRINTING')
+    replace(metafile, '  SkPDF::Metadata metadata;',
+            '#if BUILDFLAG(ENABLE_PRINTING)\n  SkPDF::Metadata metadata;')
+    replace(metafile, '  return SkPDF::MakeDocument(stream, metadata);',
+            '  return SkPDF::MakeDocument(stream, metadata);\n'
+            '#else\n'
+            '  return nullptr;\n'
+            '#endif  // BUILDFLAG(ENABLE_PRINTING)')
     for anchor in (
         '      "$root_gen_dir/content/browser/devtools/devtools_resources.pak",\n',
         '      "//content/browser/devtools:devtools_resources",\n',
