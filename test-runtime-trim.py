@@ -140,8 +140,10 @@ class TrimTests(unittest.TestCase):
                 'import("//chrome/common/features.gni")\n\nif (enable_devtools_frontend) {'))
             locales = (root / 'build/config/locales.gni').read_text()
             self.assertIn('platform_pak_locales = []\n  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ] + pseudolocales', locales)
-            self.assertLess(locales.index('if (is_win) {\n  platform_pak_locales = []'),
-                            locales.index('locales_without_pseudolocales ='))
+            trim_at = locales.index('if (is_win) {\n  platform_pak_locales = []')
+            self.assertLess(locales.index('locales_without_pseudolocales ='), trim_at)
+            self.assertLess(locales.index('locales_with_pseudolocales ='), trim_at)
+            self.assertLess(trim_at, locales.index('if (!enable_pseudolocales) {'))
             paks = (root / 'electron/build/electron_paks.gni').read_text()
             self.assertNotIn('devtools_resources.pak', paks)
             self.assertIn('pdf_resources.pak', paks)

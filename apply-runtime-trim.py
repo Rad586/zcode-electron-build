@@ -104,11 +104,11 @@ def patch(root):
     replace('electron/build/args/all.gn', 'enable_linux_installer = false\n', '')
 
     replace('build/config/locales.gni',
-            'locales_without_pseudolocales = platform_pak_locales - pseudolocales',
+            'if (!enable_pseudolocales) {',
             'if (is_win) {\n'
             '  platform_pak_locales = []\n'
             '  platform_pak_locales = [ "en-US", "zh-CN", "zh-TW" ] + pseudolocales\n'
-            '}\n\nlocales_without_pseudolocales = platform_pak_locales - pseudolocales')
+            '}\n\nif (!enable_pseudolocales) {')
     replace('components/spellcheck/spellcheck_build_features.gni',
             'enable_spellcheck = use_blink', 'enable_spellcheck = false')
 
