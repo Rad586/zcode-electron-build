@@ -252,8 +252,14 @@ def patch(root):
 
     replace('third_party/blink/common/origin_trials/manual_completion_origin_trial_features.cc',
             '      blink::mojom::OriginTrialFeature::kXSLT,\n', '')
-    replace('content/child/runtime_features.cc',
-            '          {wf::EnableXSLT, raw_ref(blink::features::kXSLT)},\n', '')
+    name = 'content/child/runtime_features.cc'
+    file = root / name
+    text = file.read_text(encoding='utf-8')
+    mappings = re.compile(r'(?m)^          \{wf::Enable(' + '|'.join(BLINK_FEATURES) +
+                          r'),[^{}]*?\},\n')
+    if not {'XSLT', 'WebUSB', 'WebXR', 'PaymentApp', 'SecurePaymentConfirmation'} <= set(mappings.findall(text)):
+        raise RuntimeError(f'{name}: missing trimmed feature mappings')
+    edits[file] = mappings.sub('', text)
 
     name = 'third_party/blink/renderer/platform/runtime_enabled_features.json5'
     file = root / name

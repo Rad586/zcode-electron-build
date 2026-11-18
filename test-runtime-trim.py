@@ -151,7 +151,7 @@ class TrimTests(unittest.TestCase):
             self.assertNotIn('OriginTrialFeature::kXSLT', manual_trials)
             self.assertIn('OriginTrialFeature::kRTCEncodedFrameSetMetadata', manual_trials)
             runtime_features = (root / 'content/child/runtime_features.cc').read_text()
-            self.assertNotIn('wf::EnableXSLT', runtime_features)
+            self.assertNotRegex(runtime_features, r'\{wf::Enable(?:' + '|'.join(trim.BLINK_FEATURES) + r'),')
             self.assertNotIn('blink::features::kXSLT', runtime_features)
             self.assertIn('{wf::EnableWebXRSpecParity,\n'
                           '           raw_ref(device::features::kWebXRIncubations)},\n'
