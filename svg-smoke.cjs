@@ -42,6 +42,15 @@ app.whenReady().then(async () => {
         return Array.from(ctx.getImageData(75, 50, 1, 1).data);
       };
       const cropLeft = crop(0), cropRight = crop(50), cropLeftAgain = crop(0);
+      const stroke = await load('<path d="M10 50H90" stroke="red" stroke-width="10" vector-effect="non-scaling-stroke"/>');
+      const strokeWidths = [[100,100], [20,20], [100,20], [20,100], [100,100]].map(([width, height]) => {
+        ctx.clearRect(0, 0, 100, 100);
+        ctx.drawImage(stroke, 0, 0, width, height);
+        const column = ctx.getImageData(width / 2, 0, 1, 100).data;
+        let painted = 0;
+        for (let y = 0; y < 100; y++) painted += column[y * 4 + 3] > 128;
+        return painted;
+      });
       const animated = await load('<rect width="100" height="100" fill="red"><animate attributeName="fill" values="red;blue" dur="0.1s" fill="freeze"/></rect>');
       const animationStart = pixel(animated);
       let animationEnd;
@@ -50,7 +59,7 @@ app.whenReady().then(async () => {
         animationEnd = pixel(animated);
         if (animationEnd[2] > animationEnd[0]) break;
       }
-      return {first,repeated,small,large,cropped,otherCrop,ordinaryPixel,fragmentPixel,cropLeft,cropRight,cropLeftAgain,animationStart,animationEnd};
+      return {first,repeated,small,large,cropped,otherCrop,ordinaryPixel,fragmentPixel,cropLeft,cropRight,cropLeftAgain,strokeWidths,animationStart,animationEnd};
     })()`);
     console.log(JSON.stringify({electron: process.versions.electron, results}));
     assert.deepEqual(results.first, [255, 0, 0, 255]);
@@ -64,6 +73,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(results.cropLeftAgain, results.first);
     assert.deepEqual(results.ordinaryPixel, results.first);
     assert.deepEqual(results.fragmentPixel, [0, 0, 255, 255]);
+    assert.deepEqual(results.strokeWidths, [10, 10, 10, 10, 10]);
     assert(results.animationEnd[2] > results.animationEnd[0], 'SVG animation must advance toward blue');
     assert.notDeepEqual(results.animationStart, results.animationEnd);
     assert.equal(window.isVisible(), false);
