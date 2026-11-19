@@ -58,6 +58,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
+          python "$env:GITHUB_WORKSPACE\apply-uv-wakeup.py" D:\ec\src\electron
+          if ($LASTEXITCODE) { throw 'libuv wakeup patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-svg-lifecycle.py" D:\ec\src
           if ($LASTEXITCODE) { throw 'SVG lifecycle patch failed' }
           if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation; stopping before disk exhaustion' }
@@ -99,7 +101,7 @@ jobs:
           $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-profile'
           & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-smoke.json
           if ($LASTEXITCODE) { throw 'SVG lifecycle behavior checks failed' }
-          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', 'svg-paint-record-cache'); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
+          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', 'svg-paint-record-cache', 'ready-uv-wakeup'); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
         with:
           name: electron-44.10.2-frame-cap-win32-x64

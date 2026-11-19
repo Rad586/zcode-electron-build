@@ -1,4 +1,4 @@
-"""Measure isolated alternating runtime pairs before accepting SVG record reuse."""
+"""Measure isolated alternating runtime pairs before accepting kernel changes."""
 import argparse
 import json
 import os
@@ -30,10 +30,11 @@ def compare(before, after):
             for name in left}
 
 
-def accept(comparison):
-    svg = comparison['svg']
-    if svg['gain'] <= max(0.05, 2 * svg['noise']):
-        raise RuntimeError('SVG gain does not exceed the acceptance threshold and measured noise')
+def accept(comparison, required='svg'):
+    if required is not None:
+        target = comparison[required]
+        if target['gain'] <= max(0.05, 2 * target['noise']):
+            raise RuntimeError(required + ' gain does not exceed the acceptance threshold and measured noise')
     for name, row in comparison.items():
         if row['gain'] < -max(0.1, 2 * row['noise']):
             raise RuntimeError('Measured regression: ' + name)
@@ -44,7 +45,12 @@ def main():
     parser.add_argument('--before', type=Path, required=True)
     parser.add_argument('--after', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--cases', default='svg,paint')
+    parser.add_argument('--require', default='svg')
+    parser.add_argument('--regression-only', action='store_true')
     args = parser.parse_args()
+    if not args.regression_only and args.require not in args.cases.split(','):
+        parser.error('--require must be included in --cases')
     if args.output.exists():
         raise FileExistsError(args.output)
     runs = {'before': [], 'after': []}
@@ -55,7 +61,7 @@ def main():
                 output = prefix.with_suffix('.json')
                 env = dict(os.environ, ZCODE_BENCH_OUTPUT=str(output),
                            ZCODE_BENCH_PROFILE=str(prefix), ZCODE_BENCH_SAMPLES='9',
-                           ZCODE_BENCH_CASES='svg,paint')
+                           ZCODE_BENCH_CASES=args.cases)
                 env.pop('ELECTRON_RUN_AS_NODE', None)
                 result = subprocess.run([str(getattr(args, label)), str(HERE / 'benchmark-kernel.cjs')],
                                         env=env, capture_output=True, text=True, encoding='utf-8',
@@ -68,7 +74,7 @@ def main():
         with args.output.open('x', encoding='utf-8') as output:
             json.dump({'runs': runs, 'comparison': comparison}, output)
     print(json.dumps(comparison), flush=True)
-    accept(comparison)
+    accept(comparison, None if args.regression_only else args.require)
 
 
 if __name__ == '__main__':

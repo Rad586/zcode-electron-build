@@ -12,6 +12,8 @@ app.commandLine.appendSwitch('force_physical_gpu_for_testing');
 const samples = Number(process.env.ZCODE_BENCH_SAMPLES || 5);
 assert(Number.isInteger(samples) && samples >= 3);
 const selected = process.env.ZCODE_BENCH_CASES?.split(',');
+const sharedTexture = process.env.ZCODE_BENCH_SHARED_TEXTURE === '1';
+const selectorStats = process.env.ZCODE_BENCH_SELECTOR_STATS === '1';
 const scenarios = ['svg', 'style', 'layout', 'paint', 'raster', 'transfer', 'synchronization', 'ipc', 'wakeup', 'memory'];
 if (selected) assert(selected.every(name => scenarios.includes(name)), 'Unknown scenario');
 const watchdog = setTimeout(() => {console.error('Kernel benchmark timed out'); app.exit(1);}, 240000);
@@ -112,12 +114,33 @@ const summary = values => {
   const mid = median(values);
   return {median: mid, relativeMad: mid ? median(values.map(value => Math.abs(value - mid))) / mid : 0};
 };
+const processMetrics = () => app.getAppMetrics().map(({pid, type, cpu, memory}) => ({pid, type,
+  cumulativeCPUSeconds: cpu.cumulativeCPUUsage, ...memory}));
+const processCPU = (before, after) => {
+  const prior = new Map(before.map(row => [row.pid, row]));
+  return after.flatMap(row => {
+    const start = prior.get(row.pid);
+    if (!start || !Number.isFinite(start.cumulativeCPUSeconds) || !Number.isFinite(row.cumulativeCPUSeconds)) return [];
+    return [{pid: row.pid, type: row.type, cpuMs: (row.cumulativeCPUSeconds - start.cumulativeCPUSeconds) * 1000}];
+  });
+};
+const traceCosts = new Set(['RasterTask', 'Paint', 'LocalFrameView::layout', 'Document::recalcStyle',
+  'Blink.Style.UpdateTime', 'GLES2::ReadPixels', 'CommandBufferHelper::Finish', 'GpuChannelHost::VerifyFlush',
+  'MinorGC', 'MajorGC']);
 async function main() {
   await app.whenReady();
   const window = new BrowserWindow({show: false, focusable: false, width: 1024, height: 768,
-    webPreferences: {offscreen: true, backgroundThrottling: false, nodeIntegration: true, contextIsolation: false}});
+    webPreferences: {offscreen: sharedTexture ? {useSharedTexture: true} : true,
+      backgroundThrottling: false, nodeIntegration: true, contextIsolation: false}});
   let paints = 0;
-  window.webContents.on('paint', () => paints++);
+  let sharedPaints = 0;
+  window.webContents.on('paint', event => {
+    paints++;
+    if (event.texture) {
+      sharedPaints++;
+      event.texture.release();
+    }
+  });
   window.webContents.setFrameRate(60);
   ipcMain.handle('benchmark:echo', (_event, value) => value);
   try {
@@ -128,7 +151,8 @@ async function main() {
     await debug.sendCommand('Performance.enable');
     const metric = async () => Object.fromEntries((await debug.sendCommand('Performance.getMetrics')).metrics.map(({name, value}) => [name, value]));
     const report = {electron: process.versions.electron, chromium: process.versions.chrome,
-      physicalGPU: true, gpu: {status: app.getGPUFeatureStatus(), info: await app.getGPUInfo('complete')}, samples, scenarios: {}};
+      physicalGPU: true, sharedTexture, selectorStats,
+      gpu: {status: app.getGPUFeatureStatus(), info: await app.getGPUInfo('complete')}, samples, scenarios: {}};
     assert.equal(report.gpu.status.webgl, 'enabled', 'WebGL must use hardware');
     for (const name of scenarios.filter(name => !selected || selected.includes(name))) {
       const rows = [];
@@ -169,16 +193,23 @@ async function main() {
         const before = await metric();
         const cpu = process.cpuUsage();
         const paintsBefore = paints;
-        const memoryBefore = app.getAppMetrics().map(({type, memory}) => ({type, ...memory}));
+        const sharedPaintsBefore = sharedPaints;
+        const memoryBefore = processMetrics();
         const timing = await run();
         const after = await metric();
-        if (name === 'raster') assert(paints > paintsBefore, 'Raster scenario must paint');
-        rows.push({...timing, paints: paints - paintsBefore, cpu: process.cpuUsage(cpu), memoryBefore,
-          memoryAfter: app.getAppMetrics().map(({type, memory}) => ({type, ...memory})),
+        const memoryAfter = processMetrics();
+        if (name === 'raster') {
+          assert(paints > paintsBefore, 'Raster scenario must paint');
+          if (sharedTexture) assert(sharedPaints > sharedPaintsBefore, 'Shared GPU textures are required');
+        }
+        rows.push({...timing, paints: paints - paintsBefore, sharedPaints: sharedPaints - sharedPaintsBefore,
+          cpu: process.cpuUsage(cpu), memoryBefore,
+          memoryAfter, processCPU: processCPU(memoryBefore, memoryAfter),
           metrics: Object.fromEntries(Object.entries(after).map(([key, value]) => [key, value - (before[key] || 0)]))});
       }
       await prepare();
-      await debug.sendCommand('Tracing.start', {transferMode: 'ReturnAsStream', categories: 'devtools.timeline,blink,cc,gpu,v8'});
+      await debug.sendCommand('Tracing.start', {transferMode: 'ReturnAsStream',
+        categories: 'devtools.timeline,blink,cc,gpu,v8' + (selectorStats ? ',disabled-by-default-blink.debug' : '')});
       await run();
       const done = new Promise(resolve => {
         const listener = (_event, method, params) => {
@@ -199,7 +230,26 @@ async function main() {
       const events = JSON.parse(chunks.join('')).traceEvents;
       const totals = new Map();
       const threads = new Map();
+      const selectors = new Map();
+      const styleCounters = {};
       for (const event of events) {
+        if (event.args?.counters && event.cat?.split(',').includes('blink_style')) {
+          for (const [key, value] of Object.entries(event.args.counters)) {
+            if (Number.isFinite(value)) styleCounters[key] = (styleCounters[key] || 0) + value;
+          }
+        }
+        if (event.name === 'SelectorStats') {
+          for (const timing of event.args?.selector_stats?.selector_timings || []) {
+            const key = timing.style_sheet_id + ':' + timing.selector;
+            const row = selectors.get(key) || {selector: timing.selector, styleSheetId: timing.style_sheet_id,
+              elapsedUs: 0, attempts: 0, fastRejects: 0, matches: 0};
+            row.elapsedUs += timing['elapsed (us)'];
+            row.attempts += timing.match_attempts;
+            row.fastRejects += timing.fast_reject_count;
+            row.matches += timing.match_count;
+            selectors.set(key, row);
+          }
+        }
         if (event.ph === 'M' && event.name === 'thread_name') threads.set(event.pid + ':' + event.tid, event.args.name);
         if (event.ph !== 'X' || !event.dur) continue;
         const key = event.pid + ':' + event.tid + ':' + event.name;
@@ -208,7 +258,16 @@ async function main() {
         row.count++;
         totals.set(key, row);
       }
-      report.scenarios[name] = {wallMs: summary(rows.map(row => row.wallMs)), rows,
+      const costs = Object.fromEntries([...traceCosts].map(name => [name, {ms: 0, count: 0}]));
+      for (const row of totals.values()) {
+        if (!costs[row.name]) continue;
+        costs[row.name].ms += row.ms;
+        costs[row.name].count += row.count;
+      }
+      report.scenarios[name] = {wallMs: summary(rows.map(row => row.wallMs)), rows, traceCosts: costs, styleCounters,
+        selectors: [...selectors.values()].sort((a, b) => b.elapsedUs - a.elapsedUs),
+        processCPUMs: Object.fromEntries([...new Set(rows.flatMap(row => row.processCPU.map(process => process.type)))].map(type =>
+          [type, summary(rows.map(row => row.processCPU.filter(process => process.type === type).reduce((sum, process) => sum + process.cpuMs, 0)))])),
         hotspots: [...totals.values()].map(row => ({...row, thread: threads.get(row.pid + ':' + row.tid)})).sort((a, b) => b.ms - a.ms).slice(0, 60)};
       fs.writeFileSync(output, JSON.stringify(report, null, 2), {flag: 'w'});
       console.log(JSON.stringify({scenario: name, ...report.scenarios[name].wallMs}));

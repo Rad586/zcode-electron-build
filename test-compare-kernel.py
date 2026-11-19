@@ -33,6 +33,21 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'regression: paint'):
             comparison.accept(result)
 
+    def test_required_direction(self):
+        result = comparison.compare(runs([100] * 3, [200] * 3),
+                                    runs([99] * 3, [120] * 3))
+        comparison.accept(result, 'paint')
+        with self.assertRaisesRegex(RuntimeError, 'threshold'):
+            comparison.accept(result)
+
+    def test_existing_patch_only_checks_regressions(self):
+        result = comparison.compare(runs([100] * 3, [200] * 3),
+                                    runs([99] * 3, [200] * 3))
+        comparison.accept(result, None)
+        result['paint']['gain'] = -0.2
+        with self.assertRaisesRegex(RuntimeError, 'regression: paint'):
+            comparison.accept(result, None)
+
     def test_small_gain_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'threshold'):
             comparison.accept(comparison.compare(runs([100] * 3, [200] * 3),

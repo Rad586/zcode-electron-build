@@ -105,6 +105,24 @@ async function main() {
   assert.equal(socketBytes, 2 * 1024 * 1024);
   metrics.timerTicksDuringIo = ticks;
   check();
+  let busy = true;
+  let readyTurns = 0;
+  const keepReady = () => { if (busy) { readyTurns++; setImmediate(keepReady); } };
+  setImmediate(keepReady);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert(readyTurns > 0);
+    check();
+    assert.equal(await window.webContents.executeJavaScript('6 * 7'), 42);
+    check();
+    const file = path.join(profile, 'ready-work.txt');
+    try {
+      await fs.promises.writeFile(file, 'ready I/O');
+      assert.equal(await fs.promises.readFile(file, 'utf8'), 'ready I/O');
+      check();
+    } finally {await fs.promises.rm(file, {force: true});}
+  } finally {busy = false;}
+  metrics.readyTurnsDuringMixedWork = readyTurns;
   for (let round = 0; round < 4; round++) {
     const worker = new Worker(`const {parentPort} = require('node:worker_threads'); let n=0; const tick=()=>++n===2000?parentPort.postMessage(n):setImmediate(tick); tick();`, {eval: true});
     assert.equal(await new Promise((resolve, reject) => {worker.once('message', resolve); worker.once('error', reject);}), 2000);
