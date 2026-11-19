@@ -48,6 +48,35 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'regression: paint'):
             comparison.accept(result, None)
 
+    def test_each_round_must_pass(self):
+        result = comparison.compare(runs([100] * 3, [200] * 3),
+                                    runs([60, 60, 99], [200] * 3))
+        self.assertAlmostEqual(result['svg']['gain'], 0.4)
+        with self.assertRaisesRegex(RuntimeError, 'round 3'):
+            comparison.accept(result)
+
+    def test_each_round_noise_applies(self):
+        before = runs([100] * 3, [200] * 3)
+        after = runs([60] * 3, [200] * 3)
+        after[2]['scenarios']['svg']['wallMs']['relativeMad'] = 0.3
+        result = comparison.compare(before, after)
+        self.assertAlmostEqual(result['svg']['noise'], 0.01)
+        with self.assertRaisesRegex(RuntimeError, 'round 3'):
+            comparison.accept(result)
+
+    def test_each_round_regression_applies(self):
+        result = comparison.compare(runs([100] * 3, [200] * 3),
+                                    runs([60] * 3, [200, 200, 240]))
+        self.assertEqual(result['paint']['gain'], 0)
+        with self.assertRaisesRegex(RuntimeError, 'regression: paint round 3'):
+            comparison.accept(result)
+        with self.assertRaisesRegex(RuntimeError, 'regression: paint round 3'):
+            comparison.accept(result, None)
+
+    def test_mismatched_rounds_rejected(self):
+        with self.assertRaises(ValueError):
+            comparison.compare(runs([100] * 3, [200] * 3), runs([60], [200]))
+
     def test_small_gain_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'threshold'):
             comparison.accept(comparison.compare(runs([100] * 3, [200] * 3),
