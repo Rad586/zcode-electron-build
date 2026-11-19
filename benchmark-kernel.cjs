@@ -14,7 +14,8 @@ assert(Number.isInteger(samples) && samples >= 3);
 const selected = process.env.ZCODE_BENCH_CASES?.split(',');
 const sharedTexture = process.env.ZCODE_BENCH_SHARED_TEXTURE === '1';
 const selectorStats = process.env.ZCODE_BENCH_SELECTOR_STATS === '1';
-const scenarios = ['svg', 'style', 'layout', 'paint', 'raster', 'transfer', 'synchronization', 'ipc', 'wakeup', 'memory'];
+const scenarios = ['svg', 'style', 'layout', 'paint', 'raster', 'transfer', 'synchronization', 'ipc', 'wakeup', 'memory',
+  'flex-default', 'flex-equal', 'flex-ascending', 'flex-descending', 'flex-random'];
 if (selected) assert(selected.every(name => scenarios.includes(name)), 'Unknown scenario');
 const watchdog = setTimeout(() => {console.error('Kernel benchmark timed out'); app.exit(1);}, 240000);
 
@@ -50,10 +51,19 @@ async function setup() {
     main.style.width = '';
     canvas.style.display = name === 'svg' || name === 'paint' ? 'block' : 'none';
     glCanvas.style.display = name === 'transfer' || name === 'synchronization' ? 'block' : 'none';
-    if (['style', 'layout', 'raster'].includes(name)) {
+    if (['style', 'layout', 'raster'].includes(name) || name.startsWith('flex-')) {
       main.innerHTML = '<div class="cell">中文 text 123</div>'.repeat(name === 'raster' ? 3000 : 800);
-      if (name === 'layout') main.className = 'grid';
+      if (name === 'layout' || name.startsWith('flex-')) main.className = 'grid';
       if (name === 'raster') main.className = 'tiles';
+      if (name.startsWith('flex-')) {
+        let seed = 1749;
+        [...main.children].forEach((child, index) => {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          child.style.order = name === 'flex-default' ? 0 : name === 'flex-equal' ? 7 :
+            name === 'flex-ascending' ? Math.floor(index / 4) - 100 :
+            name === 'flex-descending' ? 100 - Math.floor(index / 4) : seed % 201 - 100;
+        });
+      }
     }
     window.scrollTo(0, 0);
     await new Promise(requestAnimationFrame);
@@ -72,7 +82,7 @@ async function setup() {
         main.classList.toggle('changed');
         checksum += getComputedStyle(main.lastElementChild).color.length;
       }
-    } else if (name === 'layout') {
+    } else if (name === 'layout' || name.startsWith('flex-')) {
       for (let i = 0; i < 100; i++) {
         main.style.width = (900 + i % 5 * 17) + 'px';
         checksum += main.lastElementChild.offsetTop;
@@ -152,7 +162,11 @@ async function main() {
     const metric = async () => Object.fromEntries((await debug.sendCommand('Performance.getMetrics')).metrics.map(({name, value}) => [name, value]));
     const report = {electron: process.versions.electron, chromium: process.versions.chrome,
       physicalGPU: true, sharedTexture, selectorStats,
-      gpu: {status: app.getGPUFeatureStatus(), info: await app.getGPUInfo('complete')}, samples, scenarios: {}};
+      gpu: {status: app.getGPUFeatureStatus(), info: await app.getGPUInfo('complete')},
+      v8: {main: {heap: require('node:v8').getHeapStatistics(), spaces: require('node:v8').getHeapSpaceStatistics()},
+        renderer: await window.webContents.executeJavaScript(`({heap: require('node:v8').getHeapStatistics(),
+          spaces: require('node:v8').getHeapSpaceStatistics(), argv: process.argv, execArgv: process.execArgv})`)},
+      samples, scenarios: {}};
     assert.equal(report.gpu.status.webgl, 'enabled', 'WebGL must use hardware');
     for (const name of scenarios.filter(name => !selected || selected.includes(name))) {
       const rows = [];
