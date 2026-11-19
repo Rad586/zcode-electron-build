@@ -23,21 +23,34 @@ def summarize(runs):
 
 
 def compare(before, after):
-    left, right = summarize(before), summarize(after)
-    return {name: {'before': left[name], 'after': right[name],
-                   'gain': 1 - right[name]['medianMs'] / left[name]['medianMs'],
-                   'noise': max(left[name]['relativeMad'], right[name]['relativeMad'])}
-            for name in left}
+    if not before or len(before) != len(after):
+        raise ValueError('Expected matched nonempty runtime rounds')
+
+    def rows(left, right):
+        return {name: {'before': left[name], 'after': right[name],
+                       'gain': 1 - right[name]['medianMs'] / left[name]['medianMs'],
+                       'noise': max(left[name]['relativeMad'], right[name]['relativeMad'])}
+                for name in left}
+
+    result = rows(summarize(before), summarize(after))
+    rounds = [rows(summarize([a]), summarize([b])) for a, b in zip(before, after)]
+    for name, row in result.items():
+        row['rounds'] = [round_result[name] for round_result in rounds]
+    return result
 
 
 def accept(comparison, required='svg'):
     if required is not None:
         target = comparison[required]
-        if target['gain'] <= max(0.05, 2 * target['noise']):
-            raise RuntimeError(required + ' gain does not exceed the acceptance threshold and measured noise')
+        for label, row in [('aggregate', target), *[(f'round {i + 1}', value)
+                           for i, value in enumerate(target['rounds'])]]:
+            if row['gain'] <= max(0.05, 2 * row['noise']):
+                raise RuntimeError(required + ' ' + label + ' gain does not exceed the acceptance threshold and measured noise')
     for name, row in comparison.items():
-        if row['gain'] < -max(0.1, 2 * row['noise']):
-            raise RuntimeError('Measured regression: ' + name)
+        for label, result in [('aggregate', row), *[(f'round {i + 1}', value)
+                              for i, value in enumerate(row['rounds'])]]:
+            if result['gain'] < -max(0.1, 2 * result['noise']):
+                raise RuntimeError('Measured regression: ' + name + ' ' + label)
 
 
 def main():
