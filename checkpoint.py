@@ -13,7 +13,8 @@ import time
 HERE = Path(__file__).resolve().parent
 LEGACY_SOURCE = '4dbfd300a0041b5eef4faf03c6674f0192e1ba89'
 PATCH_SCRIPTS = ('apply-frame-cap.py', 'apply-asar-stat.py', 'apply-svg-lifecycle.py',
-                 'apply-uv-wakeup.py', 'apply-runtime-trim.py', 'trim-icu.py', 'trim-runtime.gn')
+                 'apply-uv-wakeup.py', 'apply-runtime-trim.py',
+                 'trim-icu.py', 'trim-runtime.gn')
 
 ROOT = Path('D:/ec/src')
 CACHE = Path('D:/ec/checkpoint')

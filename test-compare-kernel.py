@@ -1,7 +1,11 @@
 """Check noise and regression gates with synthetic measurement distributions."""
 import importlib.util
+import json
 from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('comparison', Path(__file__).with_name('compare-kernel.py'))
 comparison = importlib.util.module_from_spec(spec)
@@ -76,6 +80,37 @@ class ComparisonTests(unittest.TestCase):
     def test_mismatched_rounds_rejected(self):
         with self.assertRaises(ValueError):
             comparison.compare(runs([100] * 3, [200] * 3), runs([60], [200]))
+
+    def test_acceptance_disables_inherited_profiling(self):
+        calls = []
+
+        def run(command, *, env, **kwargs):
+            calls.append(command[0])
+            for name in ('CPU_PROFILE', 'TRACE', 'TRACE_SAMPLES', 'SELECTOR_STATS'):
+                self.assertEqual(env['ZCODE_BENCH_' + name], '0')
+            self.assertNotIn('ZCODE_BENCH_SAMPLE_STATE', env)
+            self.assertNotIn('ELECTRON_RUN_AS_NODE', env)
+            value = 100 if command[0] == 'before.exe' else 60
+            Path(env['ZCODE_BENCH_OUTPUT']).write_text(
+                json.dumps(runs([value], [200])[0]), encoding='utf-8')
+            return SimpleNamespace(returncode=0)
+
+        inherited = {name: '1' for name in ('ZCODE_BENCH_CPU_PROFILE', 'ZCODE_BENCH_TRACE',
+                     'ZCODE_BENCH_TRACE_SAMPLES', 'ZCODE_BENCH_SELECTOR_STATS',
+                     'ZCODE_BENCH_SAMPLE_STATE', 'ELECTRON_RUN_AS_NODE')}
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as work:
+            output = Path(work) / 'comparison.json'
+            argv = ['compare-kernel.py', '--before', 'before.exe', '--after', 'after.exe',
+                    '--output', str(output)]
+            with patch.dict(comparison.os.environ, inherited), \
+                    patch('sys.argv', argv), patch.object(comparison.subprocess, 'run', run), \
+                    patch('builtins.print'):
+                comparison.main()
+            self.assertEqual(calls, ['before.exe', 'after.exe', 'after.exe',
+                                     'before.exe', 'before.exe', 'after.exe'])
+            result = json.loads(output.read_text(encoding='utf-8'))
+            self.assertEqual(len(result['runs']['before']), 3)
+            self.assertAlmostEqual(result['comparison']['svg']['gain'], 0.4)
 
     def test_small_gain_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'threshold'):

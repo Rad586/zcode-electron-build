@@ -14,8 +14,10 @@ assert(Number.isInteger(samples) && samples >= 3);
 const selected = process.env.ZCODE_BENCH_CASES?.split(',');
 const sharedTexture = process.env.ZCODE_BENCH_SHARED_TEXTURE === '1';
 const selectorStats = process.env.ZCODE_BENCH_SELECTOR_STATS === '1';
-const scenarios = ['svg', 'style', 'layout', 'paint', 'raster', 'transfer', 'synchronization', 'ipc', 'wakeup', 'memory',
-  'flex-default', 'flex-equal', 'flex-ascending', 'flex-descending', 'flex-random'];
+const cpuProfile = process.env.ZCODE_BENCH_CPU_PROFILE === '1';
+const trace = process.env.ZCODE_BENCH_TRACE !== '0';
+const traceSamples = process.env.ZCODE_BENCH_TRACE_SAMPLES === '1';
+const scenarios = ['svg', 'style', 'layout', 'paint', 'raster', 'transfer', 'synchronization', 'ipc', 'wakeup', 'memory'];
 if (selected) assert(selected.every(name => scenarios.includes(name)), 'Unknown scenario');
 const watchdog = setTimeout(() => {console.error('Kernel benchmark timed out'); app.exit(1);}, 240000);
 
@@ -51,19 +53,10 @@ async function setup() {
     main.style.width = '';
     canvas.style.display = name === 'svg' || name === 'paint' ? 'block' : 'none';
     glCanvas.style.display = name === 'transfer' || name === 'synchronization' ? 'block' : 'none';
-    if (['style', 'layout', 'raster'].includes(name) || name.startsWith('flex-')) {
+    if (['style', 'layout', 'raster'].includes(name)) {
       main.innerHTML = '<div class="cell">中文 text 123</div>'.repeat(name === 'raster' ? 3000 : 800);
-      if (name === 'layout' || name.startsWith('flex-')) main.className = 'grid';
+      if (name === 'layout') main.className = 'grid';
       if (name === 'raster') main.className = 'tiles';
-      if (name.startsWith('flex-')) {
-        let seed = 1749;
-        [...main.children].forEach((child, index) => {
-          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-          child.style.order = name === 'flex-default' ? 0 : name === 'flex-equal' ? 7 :
-            name === 'flex-ascending' ? Math.floor(index / 4) - 100 :
-            name === 'flex-descending' ? 100 - Math.floor(index / 4) : seed % 201 - 100;
-        });
-      }
     }
     window.scrollTo(0, 0);
     await new Promise(requestAnimationFrame);
@@ -82,7 +75,7 @@ async function setup() {
         main.classList.toggle('changed');
         checksum += getComputedStyle(main.lastElementChild).color.length;
       }
-    } else if (name === 'layout' || name.startsWith('flex-')) {
+    } else if (name === 'layout') {
       for (let i = 0; i < 100; i++) {
         main.style.width = (900 + i % 5 * 17) + 'px';
         checksum += main.lastElementChild.offsetTop;
@@ -161,7 +154,7 @@ async function main() {
     await debug.sendCommand('Performance.enable');
     const metric = async () => Object.fromEntries((await debug.sendCommand('Performance.getMetrics')).metrics.map(({name, value}) => [name, value]));
     const report = {electron: process.versions.electron, chromium: process.versions.chrome,
-      physicalGPU: true, sharedTexture, selectorStats,
+      physicalGPU: true, sharedTexture, selectorStats, cpuProfile, trace, traceSamples,
       gpu: {status: app.getGPUFeatureStatus(), info: await app.getGPUInfo('complete')},
       v8: {main: {heap: require('node:v8').getHeapStatistics(), spaces: require('node:v8').getHeapSpaceStatistics()},
         renderer: await window.webContents.executeJavaScript(`({heap: require('node:v8').getHeapStatistics(),
@@ -202,6 +195,8 @@ async function main() {
         await prepare();
         await run();
       }
+      if (traceSamples) await debug.sendCommand('Tracing.start', {transferMode: 'ReturnAsStream',
+        categories: 'devtools.timeline,blink,cc,gpu,v8'});
       for (let sample = 0; sample < samples; sample++) {
         await prepare();
         const before = await metric();
@@ -209,39 +204,59 @@ async function main() {
         const paintsBefore = paints;
         const sharedPaintsBefore = sharedPaints;
         const memoryBefore = processMetrics();
-        const timing = await run();
+        let rendererProfile;
+        if (cpuProfile) {
+          await debug.sendCommand('Profiler.enable');
+          await debug.sendCommand('Profiler.start');
+        }
+        let timing;
+        const sampleState = process.env.ZCODE_BENCH_SAMPLE_STATE;
+        if (sampleState) fs.writeFileSync(sampleState, JSON.stringify({pid: window.webContents.getOSProcessId(), name, sample, active: true}));
+        try {timing = await run();}
+        finally {
+          if (sampleState) fs.writeFileSync(sampleState, JSON.stringify({active: false}));
+          if (cpuProfile) {
+            rendererProfile = (await debug.sendCommand('Profiler.stop')).profile;
+            await debug.sendCommand('Profiler.disable');
+          }
+        }
         const after = await metric();
         const memoryAfter = processMetrics();
         if (name === 'raster') {
           assert(paints > paintsBefore, 'Raster scenario must paint');
           if (sharedTexture) assert(sharedPaints > sharedPaintsBefore, 'Shared GPU textures are required');
         }
-        rows.push({...timing, paints: paints - paintsBefore, sharedPaints: sharedPaints - sharedPaintsBefore,
+        rows.push({...timing, rendererProfile, paints: paints - paintsBefore, sharedPaints: sharedPaints - sharedPaintsBefore,
           cpu: process.cpuUsage(cpu), memoryBefore,
           memoryAfter, processCPU: processCPU(memoryBefore, memoryAfter),
           metrics: Object.fromEntries(Object.entries(after).map(([key, value]) => [key, value - (before[key] || 0)]))});
       }
-      await prepare();
-      await debug.sendCommand('Tracing.start', {transferMode: 'ReturnAsStream',
-        categories: 'devtools.timeline,blink,cc,gpu,v8' + (selectorStats ? ',disabled-by-default-blink.debug' : '')});
-      await run();
-      const done = new Promise(resolve => {
-        const listener = (_event, method, params) => {
-          if (method === 'Tracing.tracingComplete') {debug.removeListener('message', listener); resolve(params);}
-        };
-        debug.on('message', listener);
-      });
-      await debug.sendCommand('Tracing.end');
-      const {stream} = await done;
-      const chunks = [];
-      try {
-        for (;;) {
-          const part = await debug.sendCommand('IO.read', {handle: stream, size: 1048576});
-          chunks.push(part.base64Encoded ? Buffer.from(part.data, 'base64').toString() : part.data);
-          if (part.eof) break;
+      let events = [];
+      if (trace || traceSamples) {
+        if (!traceSamples) {
+          await prepare();
+          await debug.sendCommand('Tracing.start', {transferMode: 'ReturnAsStream',
+            categories: 'devtools.timeline,blink,cc,gpu,v8' + (selectorStats ? ',disabled-by-default-blink.debug' : '')});
+          await run();
         }
-      } finally {await debug.sendCommand('IO.close', {handle: stream});}
-      const events = JSON.parse(chunks.join('')).traceEvents;
+        const done = new Promise(resolve => {
+          const listener = (_event, method, params) => {
+            if (method === 'Tracing.tracingComplete') {debug.removeListener('message', listener); resolve(params);}
+          };
+          debug.on('message', listener);
+        });
+        await debug.sendCommand('Tracing.end');
+        const {stream} = await done;
+        const chunks = [];
+        try {
+          for (;;) {
+            const part = await debug.sendCommand('IO.read', {handle: stream, size: 1048576});
+            chunks.push(part.base64Encoded ? Buffer.from(part.data, 'base64').toString() : part.data);
+            if (part.eof) break;
+          }
+        } finally {await debug.sendCommand('IO.close', {handle: stream});}
+        events = JSON.parse(chunks.join('')).traceEvents;
+      }
       const totals = new Map();
       const threads = new Map();
       const selectors = new Map();

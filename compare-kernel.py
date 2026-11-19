@@ -74,8 +74,11 @@ def main():
                 output = prefix.with_suffix('.json')
                 env = dict(os.environ, ZCODE_BENCH_OUTPUT=str(output),
                            ZCODE_BENCH_PROFILE=str(prefix), ZCODE_BENCH_SAMPLES='9',
-                           ZCODE_BENCH_CASES=args.cases)
+                           ZCODE_BENCH_CASES=args.cases, ZCODE_BENCH_CPU_PROFILE='0',
+                           ZCODE_BENCH_TRACE='0', ZCODE_BENCH_TRACE_SAMPLES='0',
+                           ZCODE_BENCH_SELECTOR_STATS='0')
                 env.pop('ELECTRON_RUN_AS_NODE', None)
+                env.pop('ZCODE_BENCH_SAMPLE_STATE', None)
                 result = subprocess.run([str(getattr(args, label)), str(HERE / 'benchmark-kernel.cjs')],
                                         env=env, capture_output=True, text=True, encoding='utf-8',
                                         errors='replace', timeout=250,
