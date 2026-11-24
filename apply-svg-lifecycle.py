@@ -39,7 +39,8 @@ EDITS = {
          '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {',
          '  // Paint invalidation can leave the lifecycle at kPaintClean. The\n'
          '  // chrome client tracks those updates even while observers are disabled.\n'
-         '  if (frame->GetDocument()->Lifecycle().GetState() !=\n'
+         '  const bool needs_lifecycle_update =\n'
+         '      frame->GetDocument()->Lifecycle().GetState() !=\n'
          '          DocumentLifecycle::kPaintClean ||\n'
          '      frame->GetDocument()->NeedsLayoutTreeUpdate() ||\n'
          '      view->NeedsLayout() || chrome_client_->NeedsLifecycleUpdate() ||\n'
@@ -48,13 +49,19 @@ EDITS = {
          '      view->GetLayoutView()->DescendantNeedsPaintPropertyUpdate() ||\n'
          '      view->GetLayoutView()->ShouldCheckForPaintInvalidation() ||\n'
          '      view->GetLayoutView()->DescendantShouldCheckLayoutForPaintInvalidation() ||\n'
-         '      MaybeAnimated()) {\n'
+         '      MaybeAnimated();\n'
+         '  if (needs_lifecycle_update) {\n'
          '    cached_paint_record_.reset();\n'
          '    chrome_client_->ClearNeedsLifecycleUpdate();\n'
          '    view->UpdateAllLifecyclePhases(DocumentUpdateReason::kSVGImage);\n'
          '  }\n\n'
          '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {'),
         ('  return view->GetPaintRecord(cull_rect);',
+         '  // Only retain records once a draw repeats without lifecycle work.\n'
+         '  // Animated and changing-container draws use the transient result.\n'
+         '  if (needs_lifecycle_update) {\n'
+         '    return view->GetPaintRecord(cull_rect);\n'
+         '  }\n'
          '  const std::optional<gfx::Rect> requested_cull_rect =\n'
          '      cull_rect ? std::make_optional(*cull_rect) : std::nullopt;\n'
          '  if (!cached_paint_record_ ||\n'
@@ -101,6 +108,9 @@ TEST_F(SVGImageTest, ReusesPaintRecordUntilInvalidation) {
   const SVGImage::DrawInfo info(gfx::SizeF(100, 100), 1, nullptr, false);
   const gfx::Vector2dF scale(1, 1);
   const gfx::Rect full(100, 100);
+  auto initial = GetImage().PaintRecordForCurrentFrame(info, scale, &full);
+  ASSERT_TRUE(initial);
+  EXPECT_FALSE(GetImage().cached_paint_record_);
   auto first = GetImage().PaintRecordForCurrentFrame(info, scale, &full);
   ASSERT_TRUE(first);
   auto repeated = GetImage().PaintRecordForCurrentFrame(info, scale, &full);
@@ -124,12 +134,26 @@ TEST_F(SVGImageTest, ReusesPaintRecordUntilInvalidation) {
   auto repainted = GetImage().PaintRecordForCurrentFrame(info, scale, nullptr);
   ASSERT_TRUE(repainted);
   EXPECT_NE(&uncropped->buffer(), &repainted->buffer());
+  EXPECT_FALSE(GetImage().cached_paint_record_);
+  auto clean = GetImage().PaintRecordForCurrentFrame(info, scale, nullptr);
+  ASSERT_TRUE(clean);
+  EXPECT_TRUE(GetImage().cached_paint_record_);
+  auto clean_again = GetImage().PaintRecordForCurrentFrame(info, scale, nullptr);
+  ASSERT_TRUE(clean_again);
+  EXPECT_EQ(&clean->buffer(), &clean_again->buffer());
 
   const SVGImage::DrawInfo resized_info(gfx::SizeF(50, 50), 1, nullptr, false);
   auto resized =
       GetImage().PaintRecordForCurrentFrame(resized_info, scale, nullptr);
   ASSERT_TRUE(resized);
   EXPECT_NE(&repainted->buffer(), &resized->buffer());
+  EXPECT_FALSE(GetImage().cached_paint_record_);
+  const gfx::Vector2dF changed_scale(2, 2);
+  auto scaled = GetImage().PaintRecordForCurrentFrame(
+      resized_info, changed_scale, nullptr);
+  ASSERT_TRUE(scaled);
+  EXPECT_NE(&resized->buffer(), &scaled->buffer());
+  EXPECT_FALSE(GetImage().cached_paint_record_);
 }
 
 TEST_F(SVGImageTest, AnimatedPaintStillUpdatesLifecycle) {

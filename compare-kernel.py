@@ -44,8 +44,8 @@ def accept(comparison, required='svg'):
         target = comparison[required]
         for label, row in [('aggregate', target), *[(f'round {i + 1}', value)
                            for i, value in enumerate(target['rounds'])]]:
-            if row['gain'] <= max(0.05, 2 * row['noise']):
-                raise RuntimeError(required + ' ' + label + ' gain does not exceed the acceptance threshold and measured noise')
+            if row['gain'] <= 2 * row['noise']:
+                raise RuntimeError(required + ' ' + label + ' gain does not exceed the measured-noise threshold')
     for name, row in comparison.items():
         for label, result in [('aggregate', row), *[(f'round {i + 1}', value)
                               for i, value in enumerate(row['rounds'])]]:

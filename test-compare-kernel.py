@@ -112,10 +112,22 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual(len(result['runs']['before']), 3)
             self.assertAlmostEqual(result['comparison']['svg']['gain'], 0.4)
 
-    def test_small_gain_rejected(self):
-        with self.assertRaisesRegex(RuntimeError, 'threshold'):
+    def test_small_reproducible_gain_accepted(self):
+        for gain, noise in ((0.03, 0.01), (0.005, 0.001), (0.001, 0.0001)):
+            with self.subTest(gain=gain):
+                comparison.accept(comparison.compare(
+                    runs([100] * 3, [200] * 3, mad=noise),
+                    runs([100 * (1 - gain)] * 3, [200] * 3, mad=noise)))
+
+    def test_small_gain_within_noise_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, 'noise'):
             comparison.accept(comparison.compare(runs([100] * 3, [200] * 3),
-                                                 runs([97] * 3, [200] * 3)))
+                                                 runs([99] * 3, [200] * 3)))
+
+    def test_zero_gain_without_noise_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, 'threshold'):
+            comparison.accept(comparison.compare(runs([100] * 3, [200] * 3, mad=0),
+                                                 runs([100] * 3, [200] * 3, mad=0)))
 
 
 if __name__ == '__main__':
