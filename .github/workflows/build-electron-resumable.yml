@@ -36,7 +36,9 @@ jobs:
       ZCODE_COMPILE_MINUTES: '240'
     steps:
       - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.20.1
       - name: Prepare remote workspace
         shell: pwsh
         run: |
@@ -79,6 +81,8 @@ jobs:
           path: D:\ec\checkpoint
           key: ninja-v3-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            ninja-v3-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-${{ github.run_id }}-
+            ${{ inputs.predecessor && format('ninja-v3-{0}-{1}-44.10.2-{2}-', runner.os, env.CHECKPOINT_IMAGE, inputs.predecessor) || '' }}
             ninja-v3-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-
             ninja-v2-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-44.10.2-
             ninja-v1-${{ runner.os }}-${{ env.CHECKPOINT_IMAGE }}-4dbfd300a0041b5eef4faf03c6674f0192e1ba89-
@@ -113,8 +117,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Runtime trim configuration failed' }
           python "$env:GITHUB_WORKSPACE\checkpoint.py" restore
           if ($LASTEXITCODE) { throw 'Build checkpoint restore failed' }
-          if ('${{ inputs.checkpoint_only }}' -eq 'true' -and -not (Test-Path D:\ec\src\out\Release\.ninja_log)) {
-            throw 'Checkpoint migration requires compatible compiled outputs'
+          if ('${{ inputs.checkpoint_only || inputs.predecessor != '' || github.run_attempt != '1' }}' -eq 'true' -and -not (Test-Path D:\ec\src\out\Release\.ninja_log)) {
+            throw 'Checkpoint continuation requires compatible compiled outputs'
           }
           Set-Location D:\ec\src
           & D:\depot_tools\gn.bat gen out/Release --fail-on-unused-args
@@ -190,6 +194,7 @@ jobs:
             D:\ec\compile.log
             D:\ec\src\out\Release\args.gn
             D:\ec\src\out\Release\.ninja_log
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
       - name: Report remaining disk
