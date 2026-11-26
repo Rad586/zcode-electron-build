@@ -1,6 +1,6 @@
 """Reuse clean static SVG paint artifacts without repeating the frame lifecycle."""
+import argparse
 from pathlib import Path
-import sys
 
 
 DIRECTORY = 'third_party/blink/renderer/core/svg/graphics/'
@@ -20,6 +20,31 @@ EDITS = {
         ('  DCHECK(animation_timer_);',
          '  needs_lifecycle_update_ = true;\n  DCHECK(animation_timer_);'),
     ],
+    'svg_image.cc': [
+        ('#include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"',
+         '#include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"\n'
+         '#include "third_party/blink/renderer/core/paint/paint_layer.h"'),
+        ('  view->UpdateAllLifecyclePhases(DocumentUpdateReason::kSVGImage);\n\n'
+         '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {',
+         '  // Paint invalidation can leave the lifecycle at kPaintClean. The\n'
+         '  // chrome client tracks those updates even while observers are disabled.\n'
+         '  if (frame->GetDocument()->Lifecycle().GetState() !=\n'
+         '          DocumentLifecycle::kPaintClean ||\n'
+         '      frame->GetDocument()->NeedsLayoutTreeUpdate() ||\n'
+         '      view->NeedsLayout() || chrome_client_->NeedsLifecycleUpdate() ||\n'
+         '      view->GetLayoutView()->Layer()->SelfOrDescendantNeedsRepaint() ||\n'
+         '      view->GetLayoutView()->NeedsPaintPropertyUpdate() ||\n'
+         '      view->GetLayoutView()->DescendantNeedsPaintPropertyUpdate() ||\n'
+         '      view->GetLayoutView()->ShouldCheckForPaintInvalidation() ||\n'
+         '      view->GetLayoutView()->DescendantShouldCheckLayoutForPaintInvalidation() ||\n'
+         '      MaybeAnimated()) {\n'
+         '    chrome_client_->ClearNeedsLifecycleUpdate();\n'
+         '    view->UpdateAllLifecyclePhases(DocumentUpdateReason::kSVGImage);\n'
+         '  }\n\n'
+         '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {'),
+    ],
+}
+CACHE_EDITS = {
     'svg_image.h': [
         ('#include "ui/gfx/geometry/size.h"',
          '#include "ui/gfx/geometry/rect.h"\n#include "ui/gfx/geometry/size.h"'),
@@ -32,30 +57,14 @@ EDITS = {
          '  FRIEND_TEST_ALL_PREFIXES(SVGImageTest, ReusesPaintRecordUntilInvalidation);'),
     ],
     'svg_image.cc': [
-        ('#include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"',
-         '#include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"\n'
-         '#include "third_party/blink/renderer/core/paint/paint_layer.h"'),
-        ('  view->UpdateAllLifecyclePhases(DocumentUpdateReason::kSVGImage);\n\n'
-         '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {',
-         '  // Paint invalidation can leave the lifecycle at kPaintClean. The\n'
-         '  // chrome client tracks those updates even while observers are disabled.\n'
+        ('  if (frame->GetDocument()->Lifecycle().GetState() !=',
          '  const bool needs_lifecycle_update =\n'
-         '      frame->GetDocument()->Lifecycle().GetState() !=\n'
-         '          DocumentLifecycle::kPaintClean ||\n'
-         '      frame->GetDocument()->NeedsLayoutTreeUpdate() ||\n'
-         '      view->NeedsLayout() || chrome_client_->NeedsLifecycleUpdate() ||\n'
-         '      view->GetLayoutView()->Layer()->SelfOrDescendantNeedsRepaint() ||\n'
-         '      view->GetLayoutView()->NeedsPaintPropertyUpdate() ||\n'
-         '      view->GetLayoutView()->DescendantNeedsPaintPropertyUpdate() ||\n'
-         '      view->GetLayoutView()->ShouldCheckForPaintInvalidation() ||\n'
-         '      view->GetLayoutView()->DescendantShouldCheckLayoutForPaintInvalidation() ||\n'
+         '      frame->GetDocument()->Lifecycle().GetState() !='),
+        ('      MaybeAnimated()) {\n    chrome_client_->ClearNeedsLifecycleUpdate();',
          '      MaybeAnimated();\n'
          '  if (needs_lifecycle_update) {\n'
          '    cached_paint_record_.reset();\n'
-         '    chrome_client_->ClearNeedsLifecycleUpdate();\n'
-         '    view->UpdateAllLifecyclePhases(DocumentUpdateReason::kSVGImage);\n'
-         '  }\n\n'
-         '  if (RuntimeEnabledFeatures::SvgImageAnimationResetEnabled()) {'),
+         '    chrome_client_->ClearNeedsLifecycleUpdate();'),
         ('  return view->GetPaintRecord(cull_rect);',
          '  // Only retain records once a draw repeats without lifecycle work.\n'
          '  // Animated and changing-container draws use the transient result.\n'
@@ -101,7 +110,19 @@ TEST_F(SVGImageTest, ReusesStaticPaintWithoutLifecycle) {
   frame->View()->UnregisterFromLifecycleNotifications(counter);
 }
 
-TEST_F(SVGImageTest, ReusesPaintRecordUntilInvalidation) {
+TEST_F(SVGImageTest, AnimatedPaintStillUpdatesLifecycle) {
+  Load(base::span_from_cstring(kAnimatedDocument), false);
+  PumpFrame();
+  auto* frame = To<LocalFrame>(GetImage().GetPageForTesting()->MainFrame());
+  auto* counter = MakeGarbageCollected<SVGImageLifecycleCounter>();
+  frame->View()->RegisterForLifecycleNotifications(counter);
+  PumpFrame();
+  EXPECT_GT(counter->count, 0u);
+  frame->View()->UnregisterFromLifecycleNotifications(counter);
+}
+
+'''
+CACHE_TESTS = r'''TEST_F(SVGImageTest, ReusesPaintRecordUntilInvalidation) {
   Load(base::span_from_cstring(
            "<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'>"
            "<rect width='100%' height='100%' fill='red'/></svg>"), true);
@@ -156,27 +177,18 @@ TEST_F(SVGImageTest, ReusesPaintRecordUntilInvalidation) {
   EXPECT_FALSE(GetImage().cached_paint_record_);
 }
 
-TEST_F(SVGImageTest, AnimatedPaintStillUpdatesLifecycle) {
-  Load(base::span_from_cstring(kAnimatedDocument), false);
-  PumpFrame();
-  auto* frame = To<LocalFrame>(GetImage().GetPageForTesting()->MainFrame());
-  auto* counter = MakeGarbageCollected<SVGImageLifecycleCounter>();
-  frame->View()->RegisterForLifecycleNotifications(counter);
-  PumpFrame();
-  EXPECT_GT(counter->count, 0u);
-  frame->View()->UnregisterFromLifecycleNotifications(counter);
-}
-
 '''
-EDITS['svg_image_test.cc'] = [
-    ('TEST_F(SVGImageTest, SupportsSubsequenceCaching) {',
-     TESTS + 'TEST_F(SVGImageTest, SupportsSubsequenceCaching) {'),
-]
+TEST_ANCHOR = 'TEST_F(SVGImageTest, SupportsSubsequenceCaching) {'
+EDITS['svg_image_test.cc'] = [(TEST_ANCHOR, TESTS + TEST_ANCHOR)]
+CACHE_TEST_ANCHOR = 'TEST_F(SVGImageTest, AnimatedPaintStillUpdatesLifecycle) {'
+CACHE_EDITS['svg_image_test.cc'] = [(CACHE_TEST_ANCHOR, CACHE_TESTS + CACHE_TEST_ANCHOR)]
 
 
-def patch(root):
+def patch(root, *, paint_record_cache=True):
+    cache = CACHE_EDITS if paint_record_cache else {}
     pending = []
-    for name, edits in EDITS.items():
+    for name in dict.fromkeys((*EDITS, *cache)):
+        edits = [*EDITS.get(name, ()), *cache.get(name, ())]
         file = Path(root) / DIRECTORY / name
         text = file.read_text(encoding='utf-8')
         for old, new in edits:
@@ -189,5 +201,10 @@ def patch(root):
 
 
 if __name__ == '__main__':
-    patch(sys.argv[1])
-    print('Applied static SVG lifecycle reuse.')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('root', type=Path)
+    parser.add_argument('--static-only', action='store_true')
+    args = parser.parse_args()
+    patch(args.root, paint_record_cache=not args.static_only)
+    print('Applied static SVG lifecycle reuse' +
+          ('.' if args.static_only else ' and clean paint record caching.'))

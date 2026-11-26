@@ -64,9 +64,11 @@ def identity():
                         'revinfo', '--actual', '--output-json', str(output)],
                        cwd=ROOT.parent, check=True)
         revisions = json.loads(output.read_text(encoding='utf-8'))
+    scripts = PATCH_SCRIPTS
+    if os.environ.get('ZCODE_SVG_PATCH') == 'svg-scale-invalidation':
+        scripts += ('apply-svg-scale-invalidation.py',)
     return {'schema': 3, 'args': (ROOT / 'out/Release/args.gn').read_text(encoding='utf-8'),
-            'patches': {name: (HERE / name).read_text(encoding='utf-8')
-                        for name in PATCH_SCRIPTS},
+            'patches': {name: (HERE / name).read_text(encoding='utf-8') for name in scripts},
             'depot': git('D:/depot_tools', 'rev-parse', 'HEAD'),
             'image': os.environ['ImageVersion'],
             'revisions': revision_identity(ROOT, revisions),

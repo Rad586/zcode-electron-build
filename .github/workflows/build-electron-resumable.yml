@@ -1,6 +1,6 @@
 name: Build Electron kernel with checkpoints
 
-run-name: ${{ inputs.checkpoint_only && 'Checkpoint Electron' || 'Resume Electron' }} ${{ inputs.predecessor || github.run_id }}
+run-name: ${{ inputs.checkpoint_only && 'Checkpoint Electron' || 'Resume Electron' }} ${{ inputs.predecessor || github.run_id }}${{ inputs.svg_scale && ' [svg-scale]' || '' }}
 
 on:
   workflow_dispatch:
@@ -12,6 +12,10 @@ on:
       checkpoint_only:
         description: Migrate an unchanged-source checkpoint without compiling or publishing a runtime
         required: false
+        type: boolean
+        default: false
+      svg_scale:
+        description: Build scale invalidation instead of the clean paint record cache
         type: boolean
         default: false
 
@@ -97,8 +101,20 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
-          python "$env:GITHUB_WORKSPACE\apply-svg-lifecycle.py" D:\ec\src
+          $svgArgs = @()
+          $svgPatch = 'svg-clean-paint-record-cache'
+          if ('${{ inputs.svg_scale }}' -eq 'true') {
+            $svgArgs = @('--static-only')
+            $svgPatch = 'svg-scale-invalidation'
+          }
+          python "$env:GITHUB_WORKSPACE\apply-svg-lifecycle.py" D:\ec\src @svgArgs
           if ($LASTEXITCODE) { throw 'SVG lifecycle patch failed' }
+          if ($svgArgs.Count) {
+            python "$env:GITHUB_WORKSPACE\apply-svg-scale-invalidation.py" D:\ec\src
+            if ($LASTEXITCODE) { throw 'SVG scale invalidation patch failed' }
+          }
+          $env:ZCODE_SVG_PATCH = $svgPatch
+          "ZCODE_SVG_PATCH=$svgPatch" | Add-Content $env:GITHUB_ENV
           if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation' }
           New-Item -ItemType Directory -Force D:\ec\src\out\Release | Out-Null
           $wrapper = $env:SCCACHE_PATH.Replace('\', '/')
@@ -172,7 +188,12 @@ jobs:
           $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-profile'
           & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-smoke.json
           if ($LASTEXITCODE) { throw 'SVG lifecycle behavior checks failed' }
-          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', 'svg-clean-paint-record-cache'); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
+          if ($env:ZCODE_SVG_PATCH -eq 'svg-scale-invalidation') {
+            $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-scale-profile'
+            & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-scale-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-scale-smoke.json
+            if ($LASTEXITCODE) { throw 'SVG scale behavior checks failed' }
+          }
+          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', $env:ZCODE_SVG_PATCH); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
         if: ${{ !inputs.checkpoint_only }}
         with:
@@ -183,6 +204,7 @@ jobs:
             D:\ec\native-kernel.json
             D:\ec\asar-stat.json
             D:\ec\svg-smoke.json
+            D:\ec\svg-scale-smoke.json
           if-no-files-found: error
           retention-days: 7
       - name: Preserve build diagnostics
