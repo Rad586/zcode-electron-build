@@ -1,12 +1,16 @@
 name: Build Electron kernel
 
-run-name: Build Electron ${{ github.run_id }}${{ inputs.svg_scale && ' [svg-scale]' || '' }}
+run-name: Build Electron ${{ github.run_id }}${{ inputs.svg_scale && ' [svg-scale]' || inputs.flex_layout && ' [flex-layout]' || '' }}
 
 on:
   workflow_dispatch:
     inputs:
       svg_scale:
         description: Build scale invalidation instead of the clean paint record cache
+        type: boolean
+        default: false
+      flex_layout:
+        description: Build lazy flex measurement on the static SVG baseline
         type: boolean
         default: false
 
@@ -65,17 +69,20 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
+          $scale = '${{ inputs.svg_scale }}' -eq 'true'
+          $flex = '${{ inputs.flex_layout }}' -eq 'true'
+          if ($scale -and $flex) { throw 'Select only one performance experiment' }
           $svgArgs = @()
           $svgPatch = 'svg-clean-paint-record-cache'
-          if ('${{ inputs.svg_scale }}' -eq 'true') {
+          if ($scale -or $flex) {
             $svgArgs = @('--static-only')
-            $svgPatch = 'svg-scale-invalidation'
+            $svgPatch = if ($scale) { 'svg-scale-invalidation' } else { 'flex-layout-space' }
           }
           python "$env:GITHUB_WORKSPACE\apply-svg-lifecycle.py" D:\ec\src @svgArgs
           if ($LASTEXITCODE) { throw 'SVG lifecycle patch failed' }
           if ($svgArgs.Count) {
-            python "$env:GITHUB_WORKSPACE\apply-svg-scale-invalidation.py" D:\ec\src
-            if ($LASTEXITCODE) { throw 'SVG scale invalidation patch failed' }
+            python "$env:GITHUB_WORKSPACE\apply-$svgPatch.py" D:\ec\src
+            if ($LASTEXITCODE) { throw "$svgPatch patch failed" }
           }
           "ZCODE_SVG_PATCH=$svgPatch" | Add-Content $env:GITHUB_ENV
           if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation; stopping before disk exhaustion' }
@@ -121,6 +128,10 @@ jobs:
             $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-scale-profile'
             & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-scale-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-scale-smoke.json
             if ($LASTEXITCODE) { throw 'SVG scale behavior checks failed' }
+          } elseif ($env:ZCODE_SVG_PATCH -eq 'flex-layout-space') {
+            $env:ZCODE_FLEX_PROFILE = 'D:\ec\flex-layout-profile'
+            & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\flex-layout-smoke.cjs" | Tee-Object -FilePath D:\ec\flex-layout-smoke.json
+            if ($LASTEXITCODE) { throw 'Flex layout behavior checks failed' }
           }
           @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', $env:ZCODE_SVG_PATCH); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
@@ -133,6 +144,7 @@ jobs:
             D:\ec\asar-stat.json
             D:\ec\svg-smoke.json
             D:\ec\svg-scale-smoke.json
+            D:\ec\flex-layout-smoke.json
           if-no-files-found: error
           retention-days: 7
       - name: Report remaining disk

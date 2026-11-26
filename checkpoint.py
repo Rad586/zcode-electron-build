@@ -65,8 +65,12 @@ def identity():
                        cwd=ROOT.parent, check=True)
         revisions = json.loads(output.read_text(encoding='utf-8'))
     scripts = PATCH_SCRIPTS
-    if os.environ.get('ZCODE_SVG_PATCH') == 'svg-scale-invalidation':
-        scripts += ('apply-svg-scale-invalidation.py',)
+    experiment = {
+        'svg-scale-invalidation': 'apply-svg-scale-invalidation.py',
+        'flex-layout-space': 'apply-flex-layout-space.py',
+    }.get(os.environ.get('ZCODE_SVG_PATCH'))
+    if experiment:
+        scripts += (experiment,)
     return {'schema': 3, 'args': (ROOT / 'out/Release/args.gn').read_text(encoding='utf-8'),
             'patches': {name: (HERE / name).read_text(encoding='utf-8') for name in scripts},
             'depot': git('D:/depot_tools', 'rev-parse', 'HEAD'),
