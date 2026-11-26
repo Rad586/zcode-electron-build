@@ -68,6 +68,7 @@ def identity():
     experiment = {
         'svg-scale-invalidation': 'apply-svg-scale-invalidation.py',
         'flex-layout-space': 'apply-flex-layout-space.py',
+        'direct-currentcolor': 'apply-currentcolor.py',
     }.get(os.environ.get('ZCODE_SVG_PATCH'))
     if experiment:
         scripts += (experiment,)

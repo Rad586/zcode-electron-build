@@ -1,6 +1,6 @@
 name: Build Electron kernel with checkpoints
 
-run-name: ${{ inputs.checkpoint_only && 'Checkpoint Electron' || 'Resume Electron' }} ${{ inputs.predecessor || github.run_id }}${{ inputs.svg_scale && ' [svg-scale]' || inputs.flex_layout && ' [flex-layout]' || '' }}
+run-name: ${{ inputs.checkpoint_only && 'Checkpoint Electron' || 'Resume Electron' }} ${{ inputs.predecessor || github.run_id }}${{ inputs.svg_scale && ' [svg-scale]' || inputs.flex_layout && ' [flex-layout]' || inputs.currentcolor && ' [currentcolor]' || '' }}
 
 on:
   workflow_dispatch:
@@ -20,6 +20,10 @@ on:
         default: false
       flex_layout:
         description: Build lazy flex measurement on the static SVG baseline
+        type: boolean
+        default: false
+      currentcolor:
+        description: Build direct currentColor dispatch on the static SVG baseline
         type: boolean
         default: false
 
@@ -105,23 +109,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native frame cap patch failed' }
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
-          $scale = '${{ inputs.svg_scale }}' -eq 'true'
-          $flex = '${{ inputs.flex_layout }}' -eq 'true'
-          if ($scale -and $flex) { throw 'Select only one performance experiment' }
-          $svgArgs = @()
-          $svgPatch = 'svg-clean-paint-record-cache'
-          if ($scale -or $flex) {
-            $svgArgs = @('--static-only')
-            $svgPatch = if ($scale) { 'svg-scale-invalidation' } else { 'flex-layout-space' }
-          }
-          python "$env:GITHUB_WORKSPACE\apply-svg-lifecycle.py" D:\ec\src @svgArgs
-          if ($LASTEXITCODE) { throw 'SVG lifecycle patch failed' }
-          if ($svgArgs.Count) {
-            python "$env:GITHUB_WORKSPACE\apply-$svgPatch.py" D:\ec\src
-            if ($LASTEXITCODE) { throw "$svgPatch patch failed" }
-          }
-          $env:ZCODE_SVG_PATCH = $svgPatch
-          "ZCODE_SVG_PATCH=$svgPatch" | Add-Content $env:GITHUB_ENV
+          & "$env:GITHUB_WORKSPACE\kernel-experiment.ps1" Apply `
+            -SvgScale:('${{ inputs.svg_scale }}' -eq 'true') `
+            -FlexLayout:('${{ inputs.flex_layout }}' -eq 'true') `
+            -CurrentColor:('${{ inputs.currentcolor }}' -eq 'true')
           if ((Get-PSDrive D).Free -lt 35GB) { throw 'Less than 35 GiB remains for compilation' }
           New-Item -ItemType Directory -Force D:\ec\src\out\Release | Out-Null
           $wrapper = $env:SCCACHE_PATH.Replace('\', '/')
@@ -192,18 +183,7 @@ jobs:
           & D:\ec\src\out\Release\electron.exe --expose-internals "$env:GITHUB_WORKSPACE\test-asar-stat.cjs" D:\ec\asar-fs-wrapper.ts D:\ec\fixture.asar D:\ec\asar-stat.json
           if ($LASTEXITCODE) { throw 'ASAR stat checks failed' }
           Remove-Item Env:ELECTRON_RUN_AS_NODE
-          $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-profile'
-          & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-smoke.json
-          if ($LASTEXITCODE) { throw 'SVG lifecycle behavior checks failed' }
-          if ($env:ZCODE_SVG_PATCH -eq 'svg-scale-invalidation') {
-            $env:ZCODE_SVG_PROFILE = 'D:\ec\svg-scale-profile'
-            & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\svg-scale-smoke.cjs" | Tee-Object -FilePath D:\ec\svg-scale-smoke.json
-            if ($LASTEXITCODE) { throw 'SVG scale behavior checks failed' }
-          } elseif ($env:ZCODE_SVG_PATCH -eq 'flex-layout-space') {
-            $env:ZCODE_FLEX_PROFILE = 'D:\ec\flex-layout-profile'
-            & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\flex-layout-smoke.cjs" | Tee-Object -FilePath D:\ec\flex-layout-smoke.json
-            if ($LASTEXITCODE) { throw 'Flex layout behavior checks failed' }
-          }
+          & "$env:GITHUB_WORKSPACE\kernel-experiment.ps1" Validate
           @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', $env:ZCODE_SVG_PATCH); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
         if: ${{ !inputs.checkpoint_only }}
@@ -217,6 +197,7 @@ jobs:
             D:\ec\svg-smoke.json
             D:\ec\svg-scale-smoke.json
             D:\ec\flex-layout-smoke.json
+            D:\ec\currentcolor-smoke.json
           if-no-files-found: error
           retention-days: 7
       - name: Preserve build diagnostics
