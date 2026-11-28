@@ -2,7 +2,8 @@ param(
   [ValidateSet('Apply', 'Validate')][string]$Phase,
   [switch]$SvgScale,
   [switch]$FlexLayout,
-  [switch]$CurrentColor
+  [switch]$CurrentColor,
+  [switch]$AsarRead
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +13,14 @@ $experiments = @{
   'direct-currentcolor' = @('currentcolor', 'currentcolor', 'ZCODE_CURRENTCOLOR_PROFILE')
 }
 if ($Phase -eq 'Apply') {
+  if ($AsarRead) {
+    if ($SvgScale -or $FlexLayout -or $CurrentColor) { throw 'Select only one performance experiment' }
+    $SvgScale = $true
+    python "$PSScriptRoot\apply-startup-asar-read-dispatch-20261128.py" D:\ec\src\electron
+    if ($LASTEXITCODE) { throw 'ASAR read adapter patch failed' }
+    $env:ZCODE_ASAR_READ = 'reuse-asar-read-adapter'
+    "ZCODE_ASAR_READ=$env:ZCODE_ASAR_READ" | Add-Content $env:GITHUB_ENV
+  }
   $selected = @(
     if ($SvgScale) { 'svg-scale-invalidation' }
     if ($FlexLayout) { 'flex-layout-space' }

@@ -1,10 +1,14 @@
 name: Build Electron kernel
 
-run-name: Build Electron ${{ github.run_id }}${{ inputs.svg_scale && ' [svg-scale]' || inputs.flex_layout && ' [flex-layout]' || inputs.currentcolor && ' [currentcolor]' || '' }}
+run-name: Build Electron ${{ github.run_id }}${{ inputs.asar_read && ' [asar-read]' || inputs.svg_scale && ' [svg-scale]' || inputs.flex_layout && ' [flex-layout]' || inputs.currentcolor && ' [currentcolor]' || '' }}
 
 on:
   workflow_dispatch:
     inputs:
+      asar_read:
+        description: Reuse the ASAR promise read adapter on the accepted SVG scale baseline
+        type: boolean
+        default: false
       svg_scale:
         description: Build scale invalidation instead of the clean paint record cache
         type: boolean
@@ -74,6 +78,7 @@ jobs:
           python "$env:GITHUB_WORKSPACE\apply-asar-stat.py" D:\ec\src\electron
           if ($LASTEXITCODE) { throw 'ASAR stat patch failed' }
           & "$env:GITHUB_WORKSPACE\kernel-experiment.ps1" Apply `
+            -AsarRead:('${{ inputs.asar_read }}' -eq 'true') `
             -SvgScale:('${{ inputs.svg_scale }}' -eq 'true') `
             -FlexLayout:('${{ inputs.flex_layout }}' -eq 'true') `
             -CurrentColor:('${{ inputs.currentcolor }}' -eq 'true')
@@ -112,9 +117,15 @@ jobs:
           $env:ELECTRON_RUN_AS_NODE = '1'
           & D:\ec\src\out\Release\electron.exe --expose-internals "$env:GITHUB_WORKSPACE\test-asar-stat.cjs" D:\ec\asar-fs-wrapper.ts D:\ec\fixture.asar D:\ec\asar-stat.json
           if ($LASTEXITCODE) { throw 'ASAR stat checks failed' }
+          if ($env:ZCODE_ASAR_READ) {
+            & D:\ec\src\out\Release\electron.exe "$env:GITHUB_WORKSPACE\asar-read-smoke-startup-20261128.cjs" patched D:\ec\fixture.asar D:\ec\asar-read-smoke.json
+            if ($LASTEXITCODE) { throw 'ASAR read adapter behavior checks failed' }
+          }
           Remove-Item Env:ELECTRON_RUN_AS_NODE
           & "$env:GITHUB_WORKSPACE\kernel-experiment.ps1" Validate
-          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', $env:ZCODE_SVG_PATCH); trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
+          $patches = @('frame-cap', 'single-pass-asar-stat', 'static-svg-lifecycle', $env:ZCODE_SVG_PATCH)
+          if ($env:ZCODE_ASAR_READ) { $patches += $env:ZCODE_ASAR_READ }
+          @{source = $env:GITHUB_SHA; electron = '44.10.2'; patches = $patches; trim = 'windows-d3d11-en-zh-v1'} | ConvertTo-Json | Set-Content -Encoding utf8NoBOM D:\ec\build-inputs.json
       - uses: actions/upload-artifact@v4
         with:
           name: electron-44.10.2-frame-cap-win32-x64
@@ -123,6 +134,7 @@ jobs:
             D:\ec\build-inputs.json
             D:\ec\native-kernel.json
             D:\ec\asar-stat.json
+            D:\ec\asar-read-smoke.json
             D:\ec\svg-smoke.json
             D:\ec\svg-scale-smoke.json
             D:\ec\flex-layout-smoke.json

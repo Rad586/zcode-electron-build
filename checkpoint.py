@@ -72,6 +72,8 @@ def identity():
     }.get(os.environ.get('ZCODE_SVG_PATCH'))
     if experiment:
         scripts += (experiment,)
+    if os.environ.get('ZCODE_ASAR_READ') == 'reuse-asar-read-adapter':
+        scripts += ('apply-startup-asar-read-dispatch-20261128.py',)
     return {'schema': 3, 'args': (ROOT / 'out/Release/args.gn').read_text(encoding='utf-8'),
             'patches': {name: (HERE / name).read_text(encoding='utf-8') for name in scripts},
             'depot': git('D:/depot_tools', 'rev-parse', 'HEAD'),
